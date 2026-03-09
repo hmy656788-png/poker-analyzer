@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="description" content="德州扑克起手牌胜率分析工具 - 帮助新手了解各阶段胜率">
+    <title>德州扑克胜率分析器 | Texas Hold'em Analyzer</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♠</text></svg>">
+    
+    <!-- PWA 配置 -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0a0e17">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230a0e17'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' font-size='60'>♠</text></svg>">
+
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(registration => console.log('ServiceWorker 注册成功 🎉'))
+                    .catch(err => console.log('ServiceWorker 注册失败 ❌: ', err));
+            });
+        }
+    </script>
+</head>
+
+<body>
+    <!-- 头部 -->
+    <header class="header">
+        <div class="container">
+            <h1>♠ 德州扑克胜率分析器</h1>
+            <p>Texas Hold'em Equity Analyzer · 翻前 / 翻牌 / 转牌 / 河牌 全阶段分析</p>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- 阶段进度条 -->
+        <div class="stage-progress" id="stageProgress">
+            <span class="stage-name active" data-stage="preflop">翻前</span>
+            <span class="stage-dot current" data-stage="preflop"></span>
+            <span class="stage-line" data-stage="flop-line"></span>
+            <span class="stage-name" data-stage="flop">翻牌</span>
+            <span class="stage-dot pending" data-stage="flop"></span>
+            <span class="stage-line" data-stage="turn-line"></span>
+            <span class="stage-name" data-stage="turn">转牌</span>
+            <span class="stage-dot pending" data-stage="turn"></span>
+            <span class="stage-line" data-stage="river-line"></span>
+            <span class="stage-name" data-stage="river">河牌</span>
+            <span class="stage-dot pending" data-stage="river"></span>
+        </div>
+
+        <!-- 主布局 -->
+        <div class="main-layout">
+            <!-- 左侧：选牌区域 -->
+            <div class="left-column">
+                <!-- 手牌选择 -->
+                <div class="panel" id="handPanel">
+                    <div class="panel-title">
+                        <span class="icon gold">🃏</span>
+                        你的手牌
+                    </div>
+                    <div class="card-selection-area">
+                        <div class="card-selection-label">
+                            <span>选择2张手牌</span>
+                            <button class="btn btn-secondary" style="padding:6px 12px;font-size:0.78rem;"
+                                onclick="app.clearHand()">清除</button>
+                        </div>
+                        <div class="selected-cards" id="handCards">
+                            <div class="selected-card-slot active-slot" data-slot="hand-0"
+                                onclick="app.activateSlot('hand', 0)">+</div>
+                            <div class="selected-card-slot" data-slot="hand-1" onclick="app.activateSlot('hand', 1)">+
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 公共牌选择 -->
+                <div class="panel" id="communityPanel" style="margin-top:16px;">
+                    <div class="panel-title">
+                        <span class="icon green">🎴</span>
+                        公共牌
+                    </div>
+
+                    <div class="stage-tabs">
+                        <button class="stage-tab active" data-stage="flop" onclick="app.switchStage('flop')">
+                            翻牌 <span class="count" id="flopCount">(0/3)</span>
+                        </button>
+                        <button class="stage-tab" data-stage="turn" onclick="app.switchStage('turn')">
+                            转牌 <span class="count" id="turnCount">(0/1)</span>
+                        </button>
+                        <button class="stage-tab" data-stage="river" onclick="app.switchStage('river')">
+                            河牌 <span class="count" id="riverCount">(0/1)</span>
+                        </button>
+                    </div>
+
+                    <div class="card-selection-area">
+                        <div class="card-selection-label">
+                            <span id="communityLabel">翻牌 - 选择3张公共牌</span>
+                            <button class="btn btn-secondary" style="padding:6px 12px;font-size:0.78rem;"
+                                onclick="app.clearCommunity()">清除公共牌</button>
+                        </div>
+                        <div class="selected-cards" id="communityCards">
+                            <div class="selected-card-slot" data-slot="community-0"
+                                onclick="app.activateSlot('community', 0)">+</div>
+                            <div class="selected-card-slot" data-slot="community-1"
+                                onclick="app.activateSlot('community', 1)">+</div>
+                            <div class="selected-card-slot" data-slot="community-2"
+                                onclick="app.activateSlot('community', 2)">+</div>
+                            <div class="selected-card-slot" data-slot="community-3"
+                                onclick="app.activateSlot('community', 3)" style="display:none;">+</div>
+                            <div class="selected-card-slot" data-slot="community-4"
+                                onclick="app.activateSlot('community', 4)" style="display:none;">+</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 选牌器 -->
+                <div class="panel" id="pickerPanel" style="margin-top:16px;">
+                    <div class="panel-title">
+                        <span class="icon blue">🎯</span>
+                        选择一张牌
+                    </div>
+                    <div class="suit-filter" id="suitFilter">
+                        <button class="suit-btn spades active" data-suit="0" onclick="app.filterSuit(0)">♠</button>
+                        <button class="suit-btn hearts active" data-suit="1" onclick="app.filterSuit(1)">♥</button>
+                        <button class="suit-btn diamonds active" data-suit="2" onclick="app.filterSuit(2)">♦</button>
+                        <button class="suit-btn clubs active" data-suit="3" onclick="app.filterSuit(3)">♣</button>
+                    </div>
+                    <div class="card-picker-grid" id="cardPicker">
+                        <!-- 动态生成 -->
+                    </div>
+                </div>
+
+                <!-- 对手数量 -->
+                <div class="opponent-selector" style="margin-top:16px;">
+                    <label>对手数量</label>
+                    <input type="range" class="opponent-slider" id="opponentSlider" min="1" max="6" value="1"
+                        oninput="app.updateOpponents(this.value)">
+                    <span class="opponent-count" id="opponentCount">1</span>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="action-buttons">
+                    <button class="btn btn-primary" id="analyzeBtn" onclick="app.analyze()" disabled>
+                        <span>🔍</span> 开始分析
+                    </button>
+                    <button class="btn btn-secondary" onclick="app.resetAll()">
+                        <span>↻</span> 重置
+                    </button>
+                </div>
+            </div>
+
+            <!-- 右侧：结果面板 -->
+            <div class="right-column">
+                <div class="panel results-panel" id="resultsPanel">
+                    <div class="panel-title">
+                        <span class="icon red">📊</span>
+                        胜率分析
+                    </div>
+
+                    <!-- 空状态 -->
+                    <div class="result-empty" id="resultEmpty">
+                        <div class="empty-icon">♠♥♦♣</div>
+                        <p>请先选择你的两张手牌<br>然后点击"开始分析"查看胜率</p>
+                    </div>
+
+                    <!-- 计算中 -->
+                    <div class="calculating" id="calculating" style="display:none;">
+                        <div class="spinner"></div>
+                        <span>正在模拟计算...</span>
+                    </div>
+
+                    <!-- 结果显示 -->
+                    <div id="resultContent" style="display:none;">
+                        <!-- 胜率大数字 -->
+                        <div class="win-rate-display">
+                            <div class="win-rate-number" id="winRateNumber">0%</div>
+                            <div class="win-rate-label">胜率 Win Rate</div>
+                        </div>
+
+                        <!-- 胜/平/负条 -->
+                        <div class="rate-bars">
+                            <div class="rate-bar">
+                                <span class="rate-bar-label">胜</span>
+                                <div class="rate-bar-track">
+                                    <div class="rate-bar-fill win" id="winBar" style="width:0%"></div>
+                                </div>
+                                <span class="rate-bar-value win" id="winValue">0%</span>
+                            </div>
+                            <div class="rate-bar">
+                                <span class="rate-bar-label">平</span>
+                                <div class="rate-bar-track">
+                                    <div class="rate-bar-fill tie" id="tieBar" style="width:0%"></div>
+                                </div>
+                                <span class="rate-bar-value tie" id="tieValue">0%</span>
+                            </div>
+                            <div class="rate-bar">
+                                <span class="rate-bar-label">负</span>
+                                <div class="rate-bar-track">
+                                    <div class="rate-bar-fill lose" id="loseBar" style="width:0%"></div>
+                                </div>
+                                <span class="rate-bar-value lose" id="loseValue">0%</span>
+                            </div>
+                        </div>
+
+                        <!-- 建议 -->
+                        <div class="advice-card" id="adviceCard">
+                            <span class="advice-emoji" id="adviceEmoji"></span>
+                            <span class="advice-text" id="adviceText"></span>
+                        </div>
+
+                        <!-- 当前牌型 -->
+                        <div class="current-hand-info" id="currentHandInfo" style="display:none;">
+                            <div class="current-hand-label">当前最佳牌型</div>
+                            <div class="current-hand-name" id="currentHandName"></div>
+                            <div class="current-hand-name-en" id="currentHandNameEn"></div>
+                        </div>
+
+                        <!-- 牌型分布 -->
+                        <div class="hand-distribution">
+                            <div class="hand-dist-title">牌型出现概率</div>
+                            <div id="handDistList">
+                                <!-- 动态生成 -->
+                            </div>
+                        </div>
+
+                        <!-- AI 策略建议按钮 -->
+                        <button class="btn btn-ai" id="aiAdvisorBtn" onclick="app.askAI()">
+                            <span class="ai-icon">🤖</span>
+                            <span>AI 策略分析</span>
+                            <span class="ai-badge">DeepSeek</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI 顾问面板 (浮动) -->
+        <div class="ai-panel-overlay" id="aiPanelOverlay" style="display:none;" onclick="app.closeAI()"></div>
+        <div class="ai-panel" id="aiPanel" style="display:none;">
+            <div class="ai-panel-header">
+                <div class="ai-panel-title">
+                    <span class="ai-avatar">🤖</span>
+                    <div>
+                        <strong>AI 德扑顾问</strong>
+                        <span class="ai-subtitle">Powered by DeepSeek</span>
+                    </div>
+                </div>
+                <button class="ai-close-btn" onclick="app.closeAI()">✕</button>
+            </div>
+            <div class="ai-panel-body" id="aiPanelBody">
+                <div class="ai-message" id="aiMessage">
+                    <div class="ai-typing" id="aiTyping">
+                        <span></span><span></span><span></span>
+                    </div>
+                    <div class="ai-content" id="aiContent"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 起手牌强度表 -->
+        <div class="preflop-section panel" style="margin-top:16px;">
+            <div class="panel-title">
+                <span class="icon gold">📋</span>
+                <span id="preflopTitle">起手牌强度表（翻前 · 1位对手）</span>
+            </div>
+            <div class="preflop-grid-wrapper">
+                <div class="preflop-grid" id="preflopGrid">
+                    <!-- 动态生成 -->
+                </div>
+            </div>
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background:rgba(16,185,129,0.6)"></div> 极强 (>65%)
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:rgba(16,185,129,0.35)"></div> 强 (58-65%)
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:rgba(52,211,153,0.2)"></div> 中上 (54-58%)
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:rgba(245,158,11,0.25)"></div> 中等 (50-54%)
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:rgba(245,158,11,0.12)"></div> 中下 (46-50%)
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:rgba(239,68,68,0.12)"></div> 弱 (42-46%)
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background:rgba(239,68,68,0.06)"></div> 很弱 (<42%) </div>
+                        <div class="legend-item">
+                            <div class="legend-color"
+                                style="background:transparent;border-left:3px solid rgba(245,158,11,0.4);"></div> 口袋对
+                        </div>
+                </div>
+            </div>
+    </main>
+
+    <!-- Tooltip -->
+    <div class="tooltip" id="tooltip" style="display:none;">
+        <div class="tt-hand" id="ttHand"></div>
+        <div class="tt-rate" id="ttRate"></div>
+        <div class="tt-type" id="ttType"></div>
+    </div>
+
+    <footer class="footer">
+        <p>基于 Monte Carlo 模拟算法 · 默认 20,000 次模拟 · 仅供参考学习</p>
+    </footer>
+
+    <script src="js/poker.js"></script>
+    <script src="js/simulator.js"></script>
+    <script src="js/app.js"></script>
+</body>
+
+</html>
