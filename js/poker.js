@@ -3,6 +3,41 @@
  * 包含牌型表示、评估和比较功能
  */
 
+// 优化12: LRU 缓存用于牌型评估
+class LRUCache {
+    constructor(capacity = 1000) {
+        this.capacity = capacity;
+        this.cache = new Map();
+    }
+
+    get(key) {
+        if (!this.cache.has(key)) return null;
+        const value = this.cache.get(key);
+        // 移到最后（最近使用）
+        this.cache.delete(key);
+        this.cache.set(key, value);
+        return value;
+    }
+
+    set(key, value) {
+        if (this.cache.has(key)) {
+            this.cache.delete(key);
+        } else if (this.cache.size >= this.capacity) {
+            // 删除最旧的（第一个）
+            const firstKey = this.cache.keys().next().value;
+            this.cache.delete(firstKey);
+        }
+        this.cache.set(key, value);
+    }
+
+    clear() {
+        this.cache.clear();
+    }
+}
+
+// 全局缓存实例
+const handEvalCache = new LRUCache(1000);
+
 // 花色定义
 const SUITS = ['spades', 'hearts', 'diamonds', 'clubs'];
 const SUIT_SYMBOLS = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
@@ -192,9 +227,31 @@ function evaluate5Cards(cards) {
 
 /**
  * 从N张牌(5-7张)中找出最佳牌型
- * 优化版：使用 O(N) 点数/花色统计，避免组合枚举
+ * 优化12: 使用 LRU 缓存避免重复评估
  */
 function getBestHand(cards) {
+    // 生成缓存键：将牌排序后转为字符串
+    const cacheKey = cards
+        .map(c => c.rank * 4 + c.suit)
+        .sort((a, b) => a - b)
+        .join(',');
+
+    // 尝试从缓存获取
+    const cached = handEvalCache.get(cacheKey);
+    if (cached) return cached;
+
+    // 未命中缓存，执行实际评估
+    const result = getBestHandUncached(cards);
+
+    // 存入缓存
+    handEvalCache.set(cacheKey, result);
+    return result;
+}
+
+/**
+ * 实际的牌型评估逻辑（无缓存）
+ */
+function getBestHandUncached(cards) {
     // 统计每个点数和花色的出现次数
     const rankCounts = new Array(13).fill(0);
     const suitCounts = new Array(4).fill(0);
@@ -294,26 +351,37 @@ function getBestHand(cards) {
         return { handRank: HAND_RANKS.FLUSH, values: top5 };
     }
 
-    // 检查顺子
-    let consecutiveCount = 0;
-    let straightHigh = -1;
-
-    for (let r = 12; r >= 0; r--) {
+    // 优化10: 使用位运算检查顺子
+    let rankBits = 0;
+    for (let r = 0; r < 13; r++) {
         if (rankCounts[r] > 0) {
-            consecutiveCount++;
-            if (consecutiveCount === 5) {
-                straightHigh = r + 4;
-                break;
-            }
-        } else {
-            consecutiveCount = 0;
+            rankBits |= (1 << r);
         }
     }
 
-    // 检查 A-2-3-4-5 顺子 (Wheel)
-    if (straightHigh === -1 && rankCounts[12] > 0 &&
-        rankCounts[3] > 0 && rankCounts[2] > 0 &&
-        rankCounts[1] > 0 && rankCounts[0] > 0) {
+    let straightHigh = -1;
+    // 检查普通顺子 (从高到低)
+    const straightPatterns = [
+        0x1F00, // A-K-Q-J-T (bits 12-8)
+        0x0F80, // K-Q-J-T-9 (bits 11-7)
+        0x07C0, // Q-J-T-9-8 (bits 10-6)
+        0x03E0, // J-T-9-8-7 (bits 9-5)
+        0x01F0, // T-9-8-7-6 (bits 8-4)
+        0x00F8, // 9-8-7-6-5 (bits 7-3)
+        0x007C, // 8-7-6-5-4 (bits 6-2)
+        0x003E, // 7-6-5-4-3 (bits 5-1)
+        0x001F, // 6-5-4-3-2 (bits 4-0)
+    ];
+
+    for (let i = 0; i < straightPatterns.length; i++) {
+        if ((rankBits & straightPatterns[i]) === straightPatterns[i]) {
+            straightHigh = 12 - i;
+            break;
+        }
+    }
+
+    // 检查 A-2-3-4-5 顺子 (Wheel) - bit pattern: 0x100F
+    if (straightHigh === -1 && (rankBits & 0x100F) === 0x100F) {
         straightHigh = 3;
     }
 
@@ -490,8 +558,21 @@ function generateStartingHandGrid(numOpponents = 1) {
                 key = RANK_KEY_NAMES[j] + RANK_KEY_NAMES[i] + 'o';
             }
             let baseWinRate = PREFLOP_CHART[key] || 40;
-            // 近似计算多人底池胜率：(单挑胜率)^n
-            let winRate = Math.round(Math.pow(baseWinRate / 100, numOpponents) * 100);
+
+            // 优化11: 改进多人底池胜率计算
+            // 使用更准确的公式：考虑对手之间的互相淘汰
+            // 公式: W_n = W_2 * (1 - (1-W_2) * 0.5)^(n-1)
+            // 其中 W_2 是单挑胜率，n 是对手数量
+            let winRate;
+            if (numOpponents === 1) {
+                winRate = baseWinRate;
+            } else {
+                const w2 = baseWinRate / 100;
+                // 每增加一个对手，胜率衰减因子
+                const decayFactor = Math.pow(1 - (1 - w2) * 0.5, numOpponents - 1);
+                winRate = Math.round(w2 * decayFactor * 100);
+            }
+
             row.push({ key, winRate, baseWinRate, row: 12 - i, col: 12 - j });
         }
         grid.push(row);

@@ -33,13 +33,28 @@ function runSimulationsWithProgress(myHand, communityCards, numOpponents, numSim
     // 每完成这么多批次汇报一次进度给前端 UI
     const progressBatchSize = Math.max(1000, Math.floor(numSimulations / 20));
 
+    // 优化1: 预分配数组池，减少 GC 压力
+    const deckSize = remainingDeck.length;
+    const shuffledPool = new Array(deckSize);
+
     for (let sim = 0; sim < numSimulations; sim++) {
-        const shuffled = shuffleDeck(remainingDeck);
+        // 优化1: 使用预分配的数组进行洗牌
+        for (let i = 0; i < deckSize; i++) {
+            shuffledPool[i] = remainingDeck[i];
+        }
+        // Fisher-Yates 洗牌（内联优化）
+        for (let i = deckSize - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const temp = shuffledPool[i];
+            shuffledPool[i] = shuffledPool[j];
+            shuffledPool[j] = temp;
+        }
+
         let drawIndex = 0;
 
         const fullCommunity = [...communityCards];
         for (let i = 0; i < communityNeeded; i++) {
-            fullCommunity.push(shuffled[drawIndex++]);
+            fullCommunity.push(shuffledPool[drawIndex++]);
         }
 
         const myFullHand = [...myHand, ...fullCommunity];
@@ -47,9 +62,10 @@ function runSimulationsWithProgress(myHand, communityCards, numOpponents, numSim
         handDistribution[myEval.handRank]++;
 
         let myResult = 'win';
+        let tieCount = 0; // 优化2: 追踪平局数量
 
         for (let opp = 0; opp < numOpponents; opp++) {
-            const oppHand = [shuffled[drawIndex++], shuffled[drawIndex++]];
+            const oppHand = [shuffledPool[drawIndex++], shuffledPool[drawIndex++]];
             const oppFullHand = [...oppHand, ...fullCommunity];
             const oppEval = getBestHand(oppFullHand);
 
@@ -58,13 +74,21 @@ function runSimulationsWithProgress(myHand, communityCards, numOpponents, numSim
                 myResult = 'lose';
                 break;
             } else if (comparison === 0) {
+                tieCount++;
                 if (myResult === 'win') myResult = 'tie';
             }
         }
 
-        if (myResult === 'win') wins++;
-        else if (myResult === 'tie') ties++;
-        else losses++;
+        if (myResult === 'win') {
+            wins++;
+        } else if (myResult === 'tie') {
+            // 按分池权重计算：我分到的部分算入胜率(Equity)，其余部分算入平局权重
+            const myShare = 1 / (tieCount + 1);
+            wins += myShare;
+            ties += (1 - myShare);
+        } else {
+            losses++;
+        }
 
         // 汇报进度
         if (sim % progressBatchSize === 0 && sim > 0) {

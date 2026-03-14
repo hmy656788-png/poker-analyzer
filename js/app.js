@@ -14,7 +14,7 @@ const app = (() => {
         numOpponents: 1,
         suitFilter: [true, true, true, true], // 花色过滤器 [spades, hearts, diamonds, clubs]
         isCalculating: false,
-        currentWorker: null,
+        currentWorkers: [],          // 优化3: 支持多个 Worker
         analysisRunId: 0,
     };
 
@@ -338,9 +338,16 @@ const app = (() => {
     function cancelAnalysis() {
         state.analysisRunId += 1;
         state.isCalculating = false;
-        if (state.currentWorker) {
-            state.currentWorker.terminate();
-            state.currentWorker = null;
+        // 优化6: 清理所有 Worker 和事件监听器
+        if (state.currentWorkers && state.currentWorkers.length > 0) {
+            state.currentWorkers.forEach(worker => {
+                if (worker) {
+                    worker.onmessage = null;
+                    worker.onerror = null;
+                    worker.terminate();
+                }
+            });
+            state.currentWorkers = [];
         }
         updateAnalyzeButton();
     }
@@ -380,51 +387,89 @@ const app = (() => {
         // 收集公共牌
         const communityCards = state.community.filter(c => c !== null);
 
-        // 使用 Web Worker 进行无阻塞多线程计算
-        try {
-            const worker = new Worker('js/worker.js');
-            state.currentWorker = worker;
+        // 优化20: 使用智能模拟次数
+        const totalSimulations = getSmartSimulationCount(communityCards.length, state.numOpponents);
 
-            worker.onmessage = function (e) {
-                if (runId !== state.analysisRunId) return;
-                const data = e.data;
-                if (data.type === 'PROGRESS') {
-                    const progressSpan = calculating.querySelector('.progress-text');
-                    if (progressSpan) {
-                        progressSpan.textContent = `深度模拟中... ${data.progress}%`;
+        // 优化3: 使用多个 Web Worker 进行并行计算
+        try {
+            const numWorkers = Math.min(navigator.hardwareConcurrency || 4, 4); // 最多4个 Worker
+            const simulationsPerWorker = Math.floor(totalSimulations / numWorkers);
+            const workers = [];
+            const results = [];
+            let completedWorkers = 0;
+
+            for (let i = 0; i < numWorkers; i++) {
+                const worker = new Worker('js/worker.js');
+                workers.push(worker);
+
+                worker.onmessage = function (e) {
+                    if (runId !== state.analysisRunId) {
+                        // 优化6: 清理事件监听器
+                        worker.onmessage = null;
+                        worker.onerror = null;
+                        worker.terminate();
+                        return;
                     }
-                } else if (data.type === 'DONE') {
+                    const data = e.data;
+                    if (data.type === 'PROGRESS') {
+                        const progressSpan = calculating.querySelector('.progress-text');
+                        if (progressSpan) {
+                            const avgProgress = Math.floor((completedWorkers * 100 + data.progress) / numWorkers);
+                            progressSpan.textContent = `深度模拟中... ${avgProgress}%`;
+                        }
+                    } else if (data.type === 'DONE') {
+                        results[i] = data.result;
+                        completedWorkers++;
+
+                        if (completedWorkers === numWorkers) {
+                            // 合并所有 Worker 的结果
+                            const mergedResult = mergeResults(results);
+                            state.isCalculating = false;
+                            state.currentWorkers = [];
+                            updateAnalyzeButton();
+                            if (calculating) calculating.style.display = 'none';
+
+                            displayResults(mergedResult, communityCards, totalSimulations);
+
+                            // 优化6: 清理所有 Worker
+                            workers.forEach(w => {
+                                w.onmessage = null;
+                                w.onerror = null;
+                                w.terminate();
+                            });
+                        }
+                    }
+                };
+
+                worker.onerror = function (error) {
+                    console.error('Worker 模拟计算错误:', error);
+                    if (runId !== state.analysisRunId) return;
                     state.isCalculating = false;
-                    state.currentWorker = null;
+                    state.currentWorkers = [];
                     updateAnalyzeButton();
                     if (calculating) calculating.style.display = 'none';
+                    // 优化6: 清理所有 Worker
+                    workers.forEach(w => {
+                        w.onmessage = null;
+                        w.onerror = null;
+                        w.terminate();
+                    });
+                };
 
-                    displayResults(data.result, communityCards);
-                    worker.terminate(); // 计算完成后销毁 Worker
-                }
-            };
+                // 发送计算指令给 Web Worker
+                worker.postMessage({
+                    myHand: state.hand,
+                    communityCards: communityCards,
+                    numOpponents: state.numOpponents,
+                    numSimulations: simulationsPerWorker
+                });
+            }
 
-            worker.onerror = function (error) {
-                console.error('Worker 模拟计算错误:', error);
-                if (runId !== state.analysisRunId) return;
-                state.isCalculating = false;
-                state.currentWorker = null;
-                updateAnalyzeButton();
-                if (calculating) calculating.style.display = 'none';
-                worker.terminate();
-            };
-
-            // 发送计算指令给 Web Worker
-            worker.postMessage({
-                myHand: state.hand,
-                communityCards: communityCards,
-                numOpponents: state.numOpponents,
-                numSimulations: 20000 // 升级版：因为有了 Worker，轻松跑到2万甚至5万次都不会卡 UI
-            });
+            state.currentWorkers = workers;
 
         } catch (err) {
             console.error('无法启动 Web Worker:', err);
-            state.currentWorker = null;
+            state.currentWorkers = [];
             // 降级回退到同步计算
             setTimeout(() => {
                 if (runId !== state.analysisRunId) return;
@@ -432,13 +477,52 @@ const app = (() => {
                 state.isCalculating = false;
                 updateAnalyzeButton();
                 if (calculating) calculating.style.display = 'none';
-                displayResults(result, communityCards);
+                displayResults(result, communityCards, 5000);
             }, 50);
         }
     }
 
+    // 优化3: 合并多个 Worker 的结果
+    function mergeResults(results) {
+        let totalWins = 0;
+        let totalTies = 0;
+        let totalLosses = 0;
+        let totalSims = 0;
+        const mergedHandDist = {};
+
+        results.forEach(result => {
+            totalWins += result.wins;
+            totalTies += result.ties;
+            totalLosses += result.losses;
+            totalSims += result.total;
+
+            Object.entries(result.handDistribution).forEach(([rank, data]) => {
+                if (!mergedHandDist[rank]) {
+                    mergedHandDist[rank] = { count: 0, percentage: 0 };
+                }
+                mergedHandDist[rank].count += data.count;
+            });
+        });
+
+        // 重新计算百分比
+        Object.keys(mergedHandDist).forEach(rank => {
+            mergedHandDist[rank].percentage = (mergedHandDist[rank].count / totalSims * 100).toFixed(1);
+        });
+
+        return {
+            winRate: (totalWins / totalSims * 100).toFixed(1),
+            tieRate: (totalTies / totalSims * 100).toFixed(1),
+            loseRate: (totalLosses / totalSims * 100).toFixed(1),
+            wins: totalWins,
+            ties: totalTies,
+            losses: totalLosses,
+            total: totalSims,
+            handDistribution: mergedHandDist
+        };
+    }
+
     // ===== 显示结果 =====
-    function displayResults(result, communityCards) {
+    function displayResults(result, communityCards, totalSimulations) {
         vibrate('success');
         const resultContent = document.getElementById('resultContent');
         if (resultContent) {
@@ -449,6 +533,12 @@ const app = (() => {
                     document.querySelector('.right-column').scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }, 100);
             }
+        }
+
+        // 更新 footer 显示实际模拟次数
+        const footer = document.querySelector('.footer p');
+        if (footer && totalSimulations) {
+            footer.textContent = `基于 Monte Carlo 模拟算法 · 本次模拟 ${totalSimulations.toLocaleString()} 次 · 仅供参考学习`;
         }
 
         const winRate = parseFloat(result.winRate);
@@ -850,6 +940,10 @@ ${currentHandName ? `- **当前最佳牌型**: ${currentHandName}` : ''}
         content.classList.remove('visible');
         content.innerHTML = '';
 
+        // 优化5: 添加超时控制
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+
         try {
             const prompt = buildAIPrompt();
 
@@ -868,6 +962,7 @@ ${currentHandName ? `- **当前最佳牌型**: ${currentHandName}` : ''}
                     max_tokens: 1500,
                     temperature: 0.7,
                 }),
+                signal: controller.signal
             });
 
             if (!response.ok) {
@@ -910,10 +1005,18 @@ ${currentHandName ? `- **当前最佳牌型**: ${currentHandName}` : ''}
         } catch (err) {
             typing.classList.add('hidden');
             content.classList.add('visible');
-            const safeMessage = escapeHTML(err && err.message ? err.message : '未知错误');
+            // 优化5: 区分超时错误和其他错误
+            let errorMessage = '未知错误';
+            if (err.name === 'AbortError') {
+                errorMessage = '请求超时，请稍后重试';
+            } else if (err && err.message) {
+                errorMessage = err.message;
+            }
+            const safeMessage = escapeHTML(errorMessage);
             content.innerHTML = `<p style="color:#ef4444;">❌ AI 分析出错：${safeMessage}</p>
             <p style="color:var(--text-muted);font-size:0.85rem;">请检查网络连接和 API Key 是否正确。</p>`;
         } finally {
+            clearTimeout(timeoutId);
             btn.classList.remove('loading');
         }
     }
