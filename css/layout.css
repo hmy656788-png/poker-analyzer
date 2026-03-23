@@ -1,0 +1,720 @@
+/* ===== 容器 ===== */
+.container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 0 24px;
+}
+
+/* ===== 头部 ===== */
+.header {
+    text-align: center;
+    padding: 48px 0 32px;
+    position: relative;
+}
+
+.header h1 {
+    font-family: 'Outfit', sans-serif;
+    font-size: 3.2rem;
+    font-weight: 800;
+    margin-bottom: 12px;
+    letter-spacing: -0.5px;
+    
+    /* Sleek gradient text */
+    background: linear-gradient(135deg, #ffffff 0%, #a5b4fc 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    
+    /* Elegant soft glow */
+    filter: drop-shadow(0 0 15px rgba(165, 180, 252, 0.3));
+    
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+
+.spade-icon {
+    /* Metallic Silver / Chrome look */
+    background: linear-gradient(135deg, #ffffff 0%, #cbd5e1 50%, #94a3b8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-size: 3.6rem;
+    filter: drop-shadow(0 0 15px rgba(255, 255, 255, 0.15));
+    animation: float-spade 3s ease-in-out infinite;
+}
+
+@keyframes float-spade {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+}
+
+.header p {
+    color: var(--text-secondary);
+    font-size: 1.05rem;
+    font-weight: 400;
+    letter-spacing: 0.5px;
+}
+
+.signature-line {
+    margin-top: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+    line-height: 1;
+    opacity: 0.92;
+}
+
+.signature-prefix {
+    font-size: 1rem;
+    color: rgba(148, 163, 184, 0.58);
+    letter-spacing: 0.04em;
+    font-weight: 400;
+}
+
+.signature-name {
+    font-family: 'Dancing Script', 'Brush Script MT', cursive;
+    font-size: 2.05rem;
+    letter-spacing: 0.03em;
+    min-width: 8.3ch;
+    text-align: left;
+    color: rgba(230, 234, 255, 0.95);
+    text-shadow:
+        0 0 2px rgba(255, 255, 255, 0.32),
+        0 0 20px rgba(96, 103, 255, 0.35),
+        0 0 44px rgba(96, 103, 255, 0.18);
+    white-space: nowrap;
+}
+
+.signature-cursor {
+    width: 2px;
+    height: 1.45rem;
+    background: rgba(208, 214, 255, 0.9);
+    border-radius: 1px;
+    box-shadow: 0 0 10px rgba(120, 128, 255, 0.72);
+    animation: typeCursorBlink 0.8s steps(1, end) infinite;
+}
+
+.signature-line.typing-done .signature-cursor {
+    opacity: 0;
+    animation: none;
+}
+
+@keyframes typeCursorBlink {
+
+    0%,
+    45% {
+        opacity: 1;
+    }
+
+    50%,
+    100% {
+        opacity: 0;
+    }
+}
+
+/* ===== 主布局 ===== */
+.main-layout {
+    display: grid;
+    grid-template-columns: 1fr 380px;
+    gap: 24px;
+    margin-bottom: 32px;
+}
+
+@media (max-width: 1024px) {
+    .main-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* ===== 阶段标签 ===== */
+.stage-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-glass);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    margin-bottom: 20px;
+}
+
+.stage-tab {
+    flex: 1;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 10px 8px;
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: var(--transition);
+    font-family: 'Inter', sans-serif;
+}
+
+.stage-tab:hover {
+    color: var(--text-secondary);
+    background: var(--bg-glass-hover);
+}
+
+.stage-tab.active {
+    background: rgba(245, 158, 11, 0.15);
+    color: var(--accent-gold);
+    font-weight: 600;
+}
+
+.stage-tab .count {
+    display: inline-block;
+    font-size: 0.7rem;
+    margin-left: 4px;
+    opacity: 0.7;
+}
+
+/* ===== 页脚 (Global Base) ===== */
+.footer {
+    text-align: center;
+    padding: 32px 0;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    border-top: 1px solid var(--border-color);
+    margin-top: 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+/* ===== 响应式 - 平板 ===== */
+@media (max-width: 768px) {
+    .header h1 {
+        font-size: 1.8rem;
+        flex-direction: column;
+        gap: 6px;
+    }
+    
+    .spade-icon {
+        font-size: 2.2rem;
+    }
+
+    .header p {
+        font-size: 0.88rem;
+    }
+
+    .signature-line {
+        margin-top: 18px;
+        gap: 6px;
+    }
+
+    .signature-prefix {
+        font-size: 0.9rem;
+    }
+
+    .signature-name {
+        font-size: 1.7rem;
+        min-width: 7.9ch;
+    }
+
+    .signature-cursor {
+        height: 1.2rem;
+    }
+
+    .header {
+        padding: 24px 0 16px;
+    }
+
+    .container {
+        padding: 0 12px;
+    }
+
+    .panel {
+        padding: 14px;
+    }
+
+    /* 主布局：移动端单列，结果面板浮动到顶部 */
+    .main-layout {
+        display: flex;
+        flex-direction: column;
+        padding-bottom: 0;
+    }
+
+    .right-column {
+        order: 2;
+        margin-top: 15px;
+    }
+
+    .results-panel {
+        position: static;
+    }
+
+    /* 牌选择器：8列更紧凑，保持触控面积 */
+    .card-picker-grid {
+        grid-template-columns: repeat(8, 1fr);
+        gap: 3px;
+    }
+
+    .pick-card {
+        aspect-ratio: 0.78;
+        font-size: 0.74rem;
+        min-height: 46px;
+        border-radius: 7px;
+    }
+
+    .pick-card .pick-rank {
+        font-size: 0.85rem;
+    }
+
+    .pick-card .pick-suit {
+        font-size: 0.9rem;
+    }
+
+    /* 手牌/公共牌槽位 */
+    .selected-cards {
+        gap: 8px;
+        min-height: 82px;
+        justify-content: center;
+    }
+
+    .selected-card-slot {
+        width: 58px;
+        height: 80px;
+    }
+
+    .poker-card {
+        width: 58px;
+        height: 80px;
+    }
+
+    .card-selection-label {
+        gap: 8px;
+        align-items: flex-start;
+    }
+
+    .btn-clear-inline {
+        min-height: 42px;
+        padding: 8px 12px;
+    }
+
+    /* 阶段进度条 */
+    .stage-progress {
+        padding: 8px 12px;
+        gap: 4px;
+        margin-bottom: 12px;
+    }
+
+    .stage-name {
+        font-size: 0.65rem;
+    }
+
+    /* 花色过滤按钮 */
+    .suit-btn {
+        padding: 10px;
+        font-size: 1.3rem;
+        min-height: 44px;
+    }
+
+    /* 阶段 Tab */
+    .stage-tabs {
+        gap: 2px;
+        padding: 3px;
+        margin-bottom: 12px;
+    }
+
+    .stage-tab {
+        padding: 10px 6px;
+        font-size: 0.82rem;
+        min-height: 44px;
+    }
+
+    /* 操作按钮吸底 */
+    .action-buttons {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(10, 14, 23, 0.95);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+        border-top: 1px solid rgba(255, 255, 255, 0.1);
+        z-index: 100;
+        margin: 0;
+        display: flex;
+        gap: 12px;
+        box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .btn {
+        padding: 14px 16px;
+        font-size: 0.95rem;
+        min-height: 50px;
+        border-radius: 12px;
+    }
+
+    /* 为主体内容底部留出空间 */
+    .main-layout {
+        padding-bottom: 80px;
+    }
+
+    /* 对手选择器更紧凑 */
+    .opponent-selector {
+        padding: 12px;
+        gap: 10px;
+        margin-bottom: 12px;
+    }
+
+    .situation-grid {
+        grid-template-columns: 1fr;
+        gap: 12px;
+    }
+
+    .situation-toggle-btn {
+        font-size: 0.72rem;
+        padding: 6px 9px;
+    }
+
+    .input-prefix {
+        gap: 6px;
+    }
+
+    .prefix-chip {
+        min-width: 40px;
+    }
+
+    .opponent-slider {
+        height: 8px;
+    }
+
+    .opponent-slider::-webkit-slider-thumb {
+        width: 28px;
+        height: 28px;
+    }
+
+    /* 胜率结果优化 */
+    .win-rate-number {
+        font-size: 3.2rem;
+    }
+
+    .win-rate-display {
+        padding: 16px 0;
+        margin-bottom: 12px;
+    }
+
+    .rate-bars {
+        gap: 10px;
+        margin-bottom: 16px;
+    }
+
+    .decision-panel {
+        padding: 14px;
+        margin-bottom: 16px;
+    }
+
+    .decision-metrics {
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .decision-action {
+        font-size: 1.15rem;
+    }
+
+    /* 起手牌网格横向滑动提示区域 */
+    .preflop-section.panel {
+        padding: 14px 4px;
+        /* 减小两侧内边距以最大化网格显示 */
+    }
+
+    .panel-title {
+        padding: 0 10px;
+    }
+
+    .preflop-grid-wrapper {
+        padding: 4px 10px 10px;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .preflop-grid {
+        min-width: unset;
+        gap: 2px;
+    }
+
+    .preflop-cell {
+        font-size: 0.6rem;
+        border-radius: 4px;
+    }
+
+    .preflop-cell .cell-rate {
+        display: none;
+    }
+
+    .preflop-cell .cell-label {
+        font-size: 0.55rem;
+    }
+
+    .legend {
+        gap: 8px;
+        padding: 0 10px;
+    }
+
+    .legend-item {
+        font-size: 0.68rem;
+    }
+
+    .footer {
+        padding: 24px 20px calc(80px + env(safe-area-inset-bottom));
+        margin-top: 24px;
+        border-top: 1px solid var(--border-color);
+        width: 100%;
+    }
+
+    .install-guide {
+        bottom: calc(86px + env(safe-area-inset-bottom));
+    }
+}
+
+/* ===== 响应式 - 小手机 ===== */
+@media (max-width: 480px) {
+    .header h1 {
+        font-size: 1.5rem;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .spade-icon {
+        font-size: 1.8rem;
+    }
+
+    .header p {
+        font-size: 0.8rem;
+    }
+
+    .signature-name {
+        font-size: 1.42rem;
+        min-width: 7.5ch;
+    }
+
+    .signature-prefix {
+        font-size: 0.82rem;
+    }
+
+    .signature-cursor {
+        height: 1.08rem;
+    }
+
+    .header {
+        padding: 20px 0 12px;
+    }
+
+    .container {
+        padding: 0 8px;
+    }
+
+    .panel {
+        padding: 12px;
+    }
+
+    /* 选牌器：更紧凑的 8 列布局 */
+    .card-picker-grid {
+        grid-template-columns: repeat(8, 1fr);
+        gap: 2px;
+    }
+
+    .pick-card {
+        min-height: 44px;
+        border-radius: 6px;
+    }
+
+    .pick-card .pick-rank {
+        font-size: 0.8rem;
+    }
+
+    .pick-card .pick-suit {
+        font-size: 0.82rem;
+    }
+
+    .selected-cards {
+        gap: 6px;
+        min-height: 68px;
+    }
+
+    .selected-card-slot {
+        width: 52px;
+        height: 72px;
+    }
+
+    .poker-card {
+        width: 52px;
+        height: 72px;
+    }
+
+    .poker-card .rank {
+        font-size: 0.9rem;
+    }
+
+    .poker-card .suit {
+        font-size: 0.95rem;
+    }
+
+    .stage-tab {
+        font-size: 0.78rem;
+        padding: 8px 4px;
+    }
+
+    .stage-tab .count {
+        font-size: 0.62rem;
+    }
+
+    .win-rate-number {
+        font-size: 2.8rem;
+    }
+
+    .rate-bar-label {
+        font-size: 0.72rem;
+        width: 24px;
+    }
+
+    .rate-bar-value {
+        font-size: 0.78rem;
+        min-width: 40px;
+    }
+
+    .advice-card {
+        padding: 12px;
+        gap: 8px;
+    }
+
+    .advice-emoji {
+        font-size: 1.2rem;
+    }
+
+    .advice-text {
+        font-size: 0.82rem;
+    }
+
+    .current-hand-info {
+        padding: 12px;
+    }
+
+    .current-hand-name {
+        font-size: 1.05rem;
+    }
+
+    .hand-dist-name {
+        width: 65px;
+        font-size: 0.72rem;
+    }
+
+    .hand-dist-pct {
+        font-size: 0.68rem;
+        width: 35px;
+    }
+
+    /* 起手牌网格 */
+    .preflop-cell {
+        font-size: 0.5rem;
+    }
+
+    .preflop-cell .cell-label {
+        font-size: 0.48rem;
+    }
+
+    .card-selection-label {
+        font-size: 0.8rem;
+    }
+
+    .panel-title {
+        font-size: 1rem;
+        margin-bottom: 14px;
+    }
+
+    .situation-toggle-btn {
+        font-size: 0.68rem;
+        padding: 6px 8px;
+    }
+
+    .panel-title .icon {
+        width: 28px;
+        height: 28px;
+        font-size: 0.85rem;
+    }
+}
+
+@media (max-width: 360px) {
+    .card-picker-grid {
+        grid-template-columns: repeat(7, 1fr);
+    }
+}
+
+/* ===== 安全区适配 (刘海/药丸屏) ===== */
+@supports (padding-top: env(safe-area-inset-top)) {
+    .header {
+        padding-top: calc(20px + env(safe-area-inset-top));
+    }
+
+    /* 页脚安全区已在响应式布局中处理 */
+
+    .container {
+        padding-left: max(12px, env(safe-area-inset-left));
+        padding-right: max(12px, env(safe-area-inset-right));
+    }
+}
+
+/* ===== 触摸设备优化 ===== */
+@media (hover: none) and (pointer: coarse) {
+
+    /* 移除不适合触摸的 hover 效果 */
+    .pick-card:hover {
+        transform: none;
+    }
+
+    .preflop-cell:hover {
+        transform: none;
+        box-shadow: none;
+    }
+
+    .selected-card-slot.filled:hover {
+        transform: none;
+    }
+
+    /* 增加触摸反馈 */
+    .pick-card:active {
+        transform: scale(0.92);
+        background: var(--bg-glass-hover);
+    }
+
+    .preflop-cell:active {
+        transform: scale(0.95);
+        opacity: 0.8;
+    }
+
+    .btn:active {
+        transform: scale(0.97);
+    }
+
+    .selected-card-slot:active {
+        transform: scale(0.95);
+    }
+
+    .suit-btn:active {
+        transform: scale(0.92);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .selected-card-slot,
+    .poker-card,
+    .pick-card,
+    .rate-bar-fill,
+    .win-rate-number,
+    .advice-card,
+    .ai-panel,
+    .btn-ai::after {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+

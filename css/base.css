@@ -1,0 +1,114 @@
+/* ===== 基础重置与变量 ===== */
+@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@600;700&family=Inter:wght@300;400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800&display=swap');
+
+:root {
+    /* 颜色系统 - AI 优化深色赌场风格 */
+    --bg-primary: #0a0e17;
+    --bg-secondary: #121826;
+    --bg-card: rgba(18, 24, 38, 0.6);
+    --bg-card-hover: rgba(30, 41, 59, 0.8);
+    --bg-glass: rgba(255, 255, 255, 0.03);
+    --bg-glass-hover: rgba(255, 255, 255, 0.08);
+
+    --text-primary: #ffffff;
+    --text-secondary: #94a3b8;
+    --text-muted: #475569;
+
+    --accent-gold: #ffcc00;
+    --accent-gold-light: #ffe566;
+    --accent-green: #00ff66;
+    --accent-green-light: #66ffaa;
+    --accent-red: #ff3366;
+    --accent-red-light: #ff6688;
+    --accent-blue: #3388ff;
+    --accent-blue-light: #66aaff;
+
+    /* 扑克花色专用色 (更亮、带霓虹感) */
+    --suit-spades: #e2e8f0;
+    --suit-hearts: #ff3366;
+    --suit-diamonds: #3388ff;
+    --suit-clubs: #00ff66;
+
+    --border-color: rgba(255, 255, 255, 0.06);
+    --border-highlight: rgba(255, 204, 0, 0.3);
+
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 8px 16px rgba(0, 0, 0, 0.6);
+    --shadow-lg: 0 16px 32px rgba(0, 0, 0, 0.8);
+    --shadow-glow: 0 0 20px rgba(0, 255, 102, 0.2);
+    --shadow-glow-gold: 0 0 30px rgba(255, 204, 0, 0.25);
+
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+
+    --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --touch-target: 44px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+button,
+.btn,
+.stage-tab,
+.suit-btn,
+.pick-card,
+.selected-card-slot,
+.preflop-cell {
+    touch-action: manipulation;
+}
+
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    overflow-x: hidden;
+    line-height: 1.6;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+}
+
+/* ===== 背景装饰 ===== */
+body::before {
+    content: '';
+    position: fixed;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background:
+        radial-gradient(circle at 20% 20%, rgba(245, 158, 11, 0.05) 0%, transparent 50%),
+        radial-gradient(circle at 80% 80%, rgba(16, 185, 129, 0.04) 0%, transparent 50%),
+        radial-gradient(circle at 50% 50%, rgba(59, 130, 246, 0.03) 0%, transparent 60%);
+    z-index: -1;
+    animation: bgFloat 30s ease-in-out infinite;
+}
+
+@keyframes bgFloat {
+
+    0%,
+    100% {
+        transform: translate(0, 0) rotate(0deg);
+    }
+
+    33% {
+        transform: translate(1%, -1%) rotate(1deg);
+    }
+
+    66% {
+        transform: translate(-1%, 1%) rotate(-1deg);
+    }
+}
+
+/* ===== 实用类 ===== */
+.mt-16 { margin-top: 16px; }
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.mr-6 { margin-right: 6px; }
+
