@@ -17,6 +17,7 @@ const CORE_ASSETS = [
     '/js/app.js',
     '/js/modules/precompute.js',
     '/js/modules/ai-advisor.js',
+    '/js/modules/install-guide.js',
     '/wasm/montecarlo.wasm',
     '/manifest.json',
 ];

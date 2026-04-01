@@ -1,6 +1,6 @@
 // js/modules/install-guide.js
 
-export function setupInstallGuide({ state, getEl }) {
+function setupInstallGuide({ state, getEl }) {
     const INSTALL_GUIDE_DISMISS_KEY = 'poker.installGuideDismissAt';
     const INSTALL_GUIDE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 
