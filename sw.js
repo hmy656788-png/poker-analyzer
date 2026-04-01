@@ -1,6 +1,6 @@
 importScripts('/js/poker.js', '/js/simulator.js');
 
-const SW_VERSION = '20260317';
+const SW_VERSION = '20260401';
 const STATIC_CACHE = `poker-static-${SW_VERSION}`;
 const RUNTIME_CACHE = `poker-runtime-${SW_VERSION}`;
 const ANALYSIS_CACHE = `poker-analysis-${ANALYSIS_CACHE_VERSION}`;
