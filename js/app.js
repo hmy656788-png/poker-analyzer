@@ -15,14 +15,16 @@ const app = (() => {
     const HOT_HAND_USAGE_KEY = 'poker.hotPreflopUsage.v1';
     const MAX_REPORTED_ERRORS = 5;
 
-    const precompute = setupPrecompute({
-        isPreflopCacheEligible: typeof isPreflopCacheEligible !== 'undefined' ? isPreflopCacheEligible : window.isPreflopCacheEligible,
-        normalizeOpponentProfile: typeof normalizeOpponentProfile !== 'undefined' ? normalizeOpponentProfile : window.normalizeOpponentProfile,
-        getStartingHandKey: typeof getStartingHandKey !== 'undefined' ? getStartingHandKey : window.getStartingHandKey,
-        DEFAULT_PREFLOP_PRECOMPUTE_TARGETS: window.DEFAULT_PREFLOP_PRECOMPUTE_TARGETS,
-        buildAnalysisCacheUrl: window.buildAnalysisCacheUrl,
-        ANALYSIS_CACHE_NAME
-    });
+    const precompute = typeof setupPrecompute === 'function'
+        ? setupPrecompute({
+            isPreflopCacheEligible: typeof isPreflopCacheEligible !== 'undefined' ? isPreflopCacheEligible : window.isPreflopCacheEligible,
+            normalizeOpponentProfile: typeof normalizeOpponentProfile !== 'undefined' ? normalizeOpponentProfile : window.normalizeOpponentProfile,
+            getStartingHandKey: typeof getStartingHandKey !== 'undefined' ? getStartingHandKey : window.getStartingHandKey,
+            DEFAULT_PREFLOP_PRECOMPUTE_TARGETS: window.DEFAULT_PREFLOP_PRECOMPUTE_TARGETS,
+            buildAnalysisCacheUrl: window.buildAnalysisCacheUrl,
+            ANALYSIS_CACHE_NAME
+        })
+        : { recordPreflopUsage() {}, schedulePopularPrecompute() {}, readCachedAnalysisEntry() { return null; }, writeCachedAnalysisEntry() {} };
     const { recordPreflopUsage, schedulePopularPrecompute, readCachedAnalysisEntry, writeCachedAnalysisEntry } = precompute;
 
     const PRECOMPUTE_IDLE_DELAY_MS = 1200;
@@ -1500,15 +1502,19 @@ const app = (() => {
         }
     }
 
-    const aiAdvisor = setupAIAdvisor({
-        state, getEl, vibrate, getStageText, formatChips, 
-        calculateDecisionMetrics, getSituationSnapshot, getOpponentProfile, 
-        RANK_NAMES: window.RANK_NAMES || RANK_NAMES, 
-        SUIT_SYMBOLS: window.SUIT_SYMBOLS || SUIT_SYMBOLS, 
-        SUITS: window.SUITS || SUITS
-    });
+    const aiAdvisor = typeof setupAIAdvisor === 'function' 
+        ? setupAIAdvisor({
+            state, getEl, vibrate, getStageText, formatChips, 
+            calculateDecisionMetrics, getSituationSnapshot, getOpponentProfile, 
+            RANK_NAMES: window.RANK_NAMES || RANK_NAMES, 
+            SUIT_SYMBOLS: window.SUIT_SYMBOLS || SUIT_SYMBOLS, 
+            SUITS: window.SUITS || SUITS
+        })
+        : { askAI() { alert('AI 模块未加载，请清除浏览器缓存后刷新'); }, closeAI() {} };
 
-    const installGuide = setupInstallGuide({ state, getEl });
+    const installGuide = typeof setupInstallGuide === 'function'
+        ? setupInstallGuide({ state, getEl })
+        : { initInstallGuide() {}, quickInstall() {}, installApp() {}, handleInstallPrimaryAction() {}, dismissInstallGuide() {} };
 
     const askAI = aiAdvisor.askAI;
     const closeAI = aiAdvisor.closeAI;
