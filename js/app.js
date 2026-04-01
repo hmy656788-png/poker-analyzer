@@ -1536,6 +1536,9 @@ const app = (() => {
     };
 })();
 
+// 确保 app 可被 HTML onclick 访问（esbuild IIFE 打包后局部变量会被重命名）
+window.app = app;
+
 // 页面加载后自动初始化
 document.addEventListener('DOMContentLoaded', () => {
     app.init();
