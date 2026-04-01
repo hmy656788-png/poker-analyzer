@@ -4,6 +4,7 @@
   "private": true,
   "description": "Texas Hold'em analyzer with Monte Carlo simulation",
   "scripts": {
+    "dev": "npx wrangler pages dev .",
     "build:wasm": "sh wasm/build.sh",
     "test": "node --test tests/**/*.test.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",

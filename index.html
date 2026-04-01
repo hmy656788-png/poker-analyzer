@@ -6,6 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="description" content="德州扑克起手牌胜率分析工具 - 帮助新手了解各阶段胜率">
     <title>德州扑克胜率分析器 | Texas Hold'em Analyzer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="dist/css/style.css">
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♠</text></svg>">
@@ -30,9 +32,41 @@
             });
         }
     </script>
+    <script>
+        window.__pokerRevealApp = function () {
+            const body = document.body;
+            if (!body || body.classList.contains('app-ready')) return;
+
+            body.classList.remove('app-loading');
+            body.classList.add('app-ready');
+
+            const bootLayer = document.getElementById('appBoot');
+            if (bootLayer) {
+                bootLayer.classList.add('is-leaving');
+                window.setTimeout(() => bootLayer.remove(), 420);
+            }
+        };
+
+        document.addEventListener('DOMContentLoaded', () => {
+            window.__pokerBootFallbackTimer = window.setTimeout(() => {
+                if (typeof window.__pokerRevealApp === 'function') {
+                    window.__pokerRevealApp();
+                }
+            }, 3200);
+        }, { once: true });
+    </script>
 </head>
 
-<body>
+<body class="app-loading">
+    <div class="app-boot" id="appBoot" aria-hidden="true">
+        <div class="app-boot__glow"></div>
+        <div class="app-boot__inner">
+            <div class="app-boot__mark">♠</div>
+            <div class="app-boot__title">德州扑克胜率分析器</div>
+            <p class="app-boot__subtitle">正在装载牌桌、起手牌表与胜率引擎</p>
+            <div class="app-boot__bar"><span></span></div>
+        </div>
+    </div>
     <!-- 头部 -->
     <header class="header">
         <div class="container">
@@ -456,6 +490,20 @@
     <script src="dist/js/poker.js"></script>
     <script src="dist/js/simulator.js"></script>
     <script src="dist/js/app.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                    if (window.__pokerBootFallbackTimer) {
+                        clearTimeout(window.__pokerBootFallbackTimer);
+                    }
+                    if (typeof window.__pokerRevealApp === 'function') {
+                        window.__pokerRevealApp();
+                    }
+                });
+            });
+        }, { once: true });
+    </script>
 </body>
 
 </html>

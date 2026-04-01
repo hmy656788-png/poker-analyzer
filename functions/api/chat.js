@@ -28,6 +28,53 @@ function getAllowedOrigins(env) {
     return fromEnv.length > 0 ? fromEnv : DEFAULT_ALLOWED_ORIGINS;
 }
 
+function getRequestOrigin(request) {
+    try {
+        return new URL(request.url).origin;
+    } catch {
+        return '';
+    }
+}
+
+function hasExpectedRequestMarker(request) {
+    return request.headers.get('X-Poker-Request') === 'ai-advisor';
+}
+
+function isAllowedSource(request, env) {
+    const allowedOrigins = new Set(getAllowedOrigins(env));
+    const requestOrigin = getRequestOrigin(request);
+    const origin = request.headers.get('Origin') || '';
+    const referer = request.headers.get('Referer') || '';
+    const secFetchSite = String(request.headers.get('Sec-Fetch-Site') || '').toLowerCase();
+
+    if (!hasExpectedRequestMarker(request)) {
+        return false;
+    }
+
+    if (requestOrigin) {
+        allowedOrigins.add(requestOrigin);
+    }
+
+    if (origin && allowedOrigins.has(origin)) {
+        return true;
+    }
+
+    if (referer) {
+        for (const allowed of allowedOrigins) {
+            if (referer.startsWith(allowed)) {
+                return true;
+            }
+        }
+    }
+
+    // Some embedded browsers strip Origin / Referer / fetch metadata on same-site POSTs.
+    if (!origin && !referer && (!secFetchSite || secFetchSite === 'same-origin' || secFetchSite === 'same-site')) {
+        return true;
+    }
+
+    return false;
+}
+
 function getClientIP(request) {
     const direct = request.headers.get('CF-Connecting-IP');
     if (direct) return direct;
@@ -82,7 +129,7 @@ function sanitizeRequestData(requestData) {
         payload: {
             model: 'deepseek-chat',
             messages,
-            stream: true,
+            stream: requestData.stream !== false,
             max_tokens: clamp(Number(requestData.max_tokens) || 1200, 128, 1600),
             temperature: clamp(Number(requestData.temperature) || 0.7, 0, 1.2)
         }
@@ -96,14 +143,9 @@ export async function onRequestPost(context) {
 
     try {
         const request = context.request;
-        const allowedOrigins = getAllowedOrigins(context.env);
-        const origin = request.headers.get('Origin') || '';
-        const referer = request.headers.get('Referer') || '';
         const contentLength = Number(request.headers.get('Content-Length') || '0');
-        const passOrigin = allowedOrigins.includes(origin);
-        const passReferer = allowedOrigins.some((allowed) => referer.startsWith(allowed));
 
-        if (!passOrigin && !passReferer) {
+        if (!isAllowedSource(request, context.env)) {
             return jsonResponse({ error: 'Forbidden origin' }, 403);
         }
 

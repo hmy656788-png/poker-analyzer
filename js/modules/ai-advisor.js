@@ -6,6 +6,9 @@ export function setupAIAdvisor({
     RANK_NAMES, SUIT_SYMBOLS, SUITS 
 }) {
     const AI_API_URL = '/api/chat';
+    const REQUEST_MARKER = 'ai-advisor';
+    const STREAM_UNSAFE_UA_RE = /MicroMessenger|QQ\/|QQBrowser|MetaSr|WebView/i;
+    const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
     function escapeHTML(str) {
         return String(str)
@@ -30,6 +33,233 @@ export function setupAIAdvisor({
             .replace(/\n\n/g, '</p><p>')
             .replace(/\n/g, '<br>')
             .replace(/^(.+)$/, '<p>$1</p>');
+    }
+
+    function isLocalRuntime() {
+        const location = window.location || {};
+        return location.protocol === 'file:' || LOCAL_HOSTNAMES.has(location.hostname || '');
+    }
+
+    function stripMarkup(text) {
+        return String(text || '')
+            .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+            .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function createErrorView(message, hint = '') {
+        return {
+            message: String(message || '未知错误').slice(0, 280),
+            hint: String(hint || '').slice(0, 280)
+        };
+    }
+
+    function mapApiError(status, serverMessage) {
+        const detail = stripMarkup(serverMessage).slice(0, 240);
+
+        if ((status === 404 || status === 405 || status === 501) && isLocalRuntime()) {
+            return createErrorView(
+                '当前本地启动方式没有提供 AI 接口。',
+                '本地测试 AI 时，请用 wrangler pages dev . 运行站点，而不是只开静态服务器。'
+            );
+        }
+
+        if (status === 403) {
+            return createErrorView(
+                '当前来源未被 AI 接口允许。',
+                '请检查 Cloudflare 环境变量 ALLOWED_ORIGINS，并确认页面和函数来自同一站点。'
+            );
+        }
+
+        if (status === 429) {
+            return createErrorView(
+                'AI 请求过于频繁，请稍后重试。',
+                '这个接口有最小请求间隔限制，通常等待 2 到 3 秒后再试就可以。'
+            );
+        }
+
+        if (status === 500 && detail.includes('DEEPSEEK_API_KEY')) {
+            return createErrorView(
+                '服务端还没有配置 DEEPSEEK_API_KEY。',
+                '请在 Cloudflare Pages / Wrangler 里补上 DEEPSEEK_API_KEY 后再调用 AI。'
+            );
+        }
+
+        if (detail) {
+            return createErrorView(
+                `AI 接口返回错误：${detail}`,
+                isLocalRuntime()
+                    ? '如果你是在本地调试，请优先确认现在是不是用 wrangler pages dev . 启动的。'
+                    : '可以去 Cloudflare Functions 日志里查看更详细的服务端报错。'
+            );
+        }
+
+        return createErrorView(
+            `API 请求失败：${status}`,
+            isLocalRuntime()
+                ? '如果你是在本地调试，请确认函数运行环境已经启动。'
+                : '请检查网络连接和服务端函数状态。'
+        );
+    }
+
+    async function readErrorMessage(response) {
+        let detail = '';
+
+        try {
+            const contentType = response.headers.get('Content-Type') || '';
+
+            if (contentType.includes('application/json')) {
+                const payload = await response.json();
+                if (payload && typeof payload.error === 'string' && payload.error.trim()) {
+                    detail = payload.error.trim();
+                }
+            } else {
+                const text = (await response.text()).trim();
+                if (text) {
+                    detail = text.slice(0, 600);
+                }
+            }
+        } catch { }
+
+        return mapApiError(response.status, detail);
+    }
+
+    function normalizeThrownError(error) {
+        const typedError = /** @type {Error & { userMessage?: string, userHint?: string }} */ (error);
+
+        if (typedError && typedError.userMessage) {
+            return createErrorView(typedError.userMessage, typedError.userHint || '');
+        }
+
+        if (error && error.name === 'AbortError') {
+            return createErrorView('请求超时，请稍后重试。', '如果连续超时，先检查网络或稍后再试一次。');
+        }
+
+        const rawMessage = String(error && error.message ? error.message : error || '未知错误').trim();
+
+        if (/Failed to fetch|NetworkError|Load failed|fetch failed|Network request failed/i.test(rawMessage)) {
+            return isLocalRuntime()
+                ? createErrorView(
+                    '当前本地环境没有可用的 AI 接口。',
+                    '本地测试 AI 时，请用 wrangler pages dev . 运行站点，而不是只开静态服务器。'
+                )
+                : createErrorView(
+                    '网络连接失败，未能连上 AI 接口。',
+                    '请检查站点网络、Cloudflare Functions 状态和服务端日志。'
+                );
+        }
+
+        return createErrorView(
+            rawMessage || '未知错误',
+            isLocalRuntime()
+                ? '如果你是在本地调试，请确认函数运行环境已经启动。'
+                : ''
+        );
+    }
+
+    function buildAIRequestPayload(prompt, stream) {
+        return {
+            model: 'deepseek-chat',
+            messages: [
+                {
+                    role: 'system',
+                    content: '你是高水平德州扑克教练。回答必须量化：动作频率、下注尺寸、诈唬频率、下一街计划都要给出具体数字，结论要与胜率/EV一致，输出适合手机阅读。'
+                },
+                { role: 'user', content: prompt }
+            ],
+            stream,
+            max_tokens: 1500,
+            temperature: 0.7,
+        };
+    }
+
+    function shouldPreferStreaming() {
+        const ua = navigator.userAgent || '';
+        const hasReadableStream = typeof ReadableStream !== 'undefined';
+        return hasReadableStream && !STREAM_UNSAFE_UA_RE.test(ua);
+    }
+
+    async function consumeStreamingResponse(response, content) {
+        if (!response.body || typeof response.body.getReader !== 'function') {
+            throw new Error('当前浏览器不支持流式响应');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+        let buffered = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffered += decoder.decode(value, { stream: true });
+            const segments = buffered.split('\n');
+            buffered = segments.pop() || '';
+
+            for (const rawLine of segments) {
+                const line = rawLine.trim();
+                if (!line.startsWith('data: ')) continue;
+
+                const data = line.slice(6);
+                if (data === '[DONE]') {
+                    return fullText;
+                }
+
+                try {
+                    const parsed = JSON.parse(data);
+                    const delta = parsed.choices?.[0]?.delta?.content || '';
+                    if (!delta) continue;
+                    fullText += delta;
+                    content.innerHTML = simpleMarkdown(fullText);
+                    const body = getEl('aiPanelBody');
+                    if (body) body.scrollTop = body.scrollHeight;
+                } catch { }
+            }
+        }
+
+        return fullText;
+    }
+
+    async function consumeJsonResponse(response, content) {
+        const payload = await response.json();
+        const fullText = payload?.choices?.[0]?.message?.content || '';
+
+        if (!fullText) {
+            throw new Error('AI 返回为空');
+        }
+
+        content.innerHTML = simpleMarkdown(fullText);
+        const body = getEl('aiPanelBody');
+        if (body) body.scrollTop = body.scrollHeight;
+        return fullText;
+    }
+
+    async function requestAI(prompt, content, stream, signal) {
+        const response = await fetch(AI_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'text/event-stream, application/json',
+                'X-Poker-Request': REQUEST_MARKER
+            },
+            body: JSON.stringify(buildAIRequestPayload(prompt, stream)),
+            signal
+        });
+
+        if (!response.ok) {
+            const errorView = await readErrorMessage(response);
+            const error = /** @type {Error & { userMessage?: string, userHint?: string }} */ (new Error(errorView.message));
+            error.userMessage = errorView.message;
+            error.userHint = errorView.hint;
+            throw error;
+        }
+
+        return stream
+            ? consumeStreamingResponse(response, content)
+            : consumeJsonResponse(response, content);
     }
 
     function buildAIPrompt() {
@@ -133,73 +363,31 @@ ${currentHandName ? `- **当前最佳牌型**: ${currentHandName}` : ''}
         try {
             const prompt = buildAIPrompt();
 
-            const response = await fetch(AI_API_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model: 'deepseek-chat',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: '你是高水平德州扑克教练。回答必须量化：动作频率、下注尺寸、诈唬频率、下一街计划都要给出具体数字，结论要与胜率/EV一致，输出适合手机阅读。'
-                        },
-                        { role: 'user', content: prompt }
-                    ],
-                    stream: true,
-                    max_tokens: 1500,
-                    temperature: 0.7,
-                }),
-                signal: controller.signal
-            });
-
-            if (!response.ok) {
-                throw new Error(`API 请求失败: ${response.status}`);
-            }
-
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder();
-            let fullText = '';
-
             typing.classList.add('hidden');
             content.classList.add('visible');
+            const preferStreaming = shouldPreferStreaming();
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n').filter(line => line.startsWith('data: '));
-
-                for (const line of lines) {
-                    const data = line.slice(6);
-                    if (data === '[DONE]') break;
-
-                    try {
-                        const parsed = JSON.parse(data);
-                        const delta = parsed.choices?.[0]?.delta?.content || '';
-                        fullText += delta;
-                        content.innerHTML = simpleMarkdown(fullText);
-                        const body = getEl('aiPanelBody');
-                        if (body) body.scrollTop = body.scrollHeight;
-                    } catch (e) { }
+            try {
+                await requestAI(prompt, content, preferStreaming, controller.signal);
+            } catch (error) {
+                const shouldFallback = preferStreaming && /流式响应|ReadableStream|reader/i.test(String(error && error.message ? error.message : error));
+                if (!shouldFallback) {
+                    throw error;
                 }
+
+                content.innerHTML = '';
+                await requestAI(prompt, content, false, controller.signal);
             }
             vibrate('success');
 
         } catch (err) {
             typing.classList.add('hidden');
             content.classList.add('visible');
-            let errorMessage = '未知错误';
-            if (err.name === 'AbortError') {
-                errorMessage = '请求超时，请稍后重试';
-            } else if (err && err.message) {
-                errorMessage = err.message;
-            }
-            const safeMessage = escapeHTML(errorMessage);
+            const errorView = normalizeThrownError(err);
+            const safeMessage = escapeHTML(errorView.message);
+            const safeHint = escapeHTML(errorView.hint);
             content.innerHTML = `<p style="color:#ef4444;">❌ AI 分析出错：${safeMessage}</p>
-            <p style="color:var(--text-muted);font-size:0.85rem;">请检查网络连接和 API Key 是否正确。</p>`;
+            ${safeHint ? `<p style="color:var(--text-muted);font-size:0.85rem;">${safeHint}</p>` : ''}`;
         } finally {
             clearTimeout(timeoutId);
             btn.classList.remove('loading');
