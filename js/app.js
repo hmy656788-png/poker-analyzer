@@ -74,6 +74,14 @@ const app = (() => {
         return DOM[id];
     }
 
+    // ===== 平台检测 =====
+    function detectPlatformFlags() {
+        const ua = navigator.userAgent || '';
+        state.isMobileDevice = /Mobi|Android|iPhone|iPad|iPod/i.test(ua);
+        state.isIOSDevice = /iPhone|iPad|iPod/i.test(ua);
+        state.isIOSSafari = state.isIOSDevice && /Safari/i.test(ua) && !/CriOS|FxiOS|OPiOS|EdgiOS/i.test(ua);
+    }
+
     // ===== 初始化 =====
     function init() {
         initErrorMonitoring();
