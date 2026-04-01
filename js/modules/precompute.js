@@ -1,6 +1,6 @@
 // js/modules/precompute.js
 
-export function setupPrecompute({ 
+function setupPrecompute({ 
     isPreflopCacheEligible, normalizeOpponentProfile, getStartingHandKey, 
     DEFAULT_PREFLOP_PRECOMPUTE_TARGETS, buildAnalysisCacheUrl, ANALYSIS_CACHE_NAME
 }) {

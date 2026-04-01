@@ -1,6 +1,6 @@
 // js/modules/ai-advisor.js
 
-export function setupAIAdvisor({ 
+function setupAIAdvisor({ 
     state, getEl, vibrate, getStageText, formatChips, 
     calculateDecisionMetrics, getSituationSnapshot, getOpponentProfile, 
     RANK_NAMES, SUIT_SYMBOLS, SUITS 

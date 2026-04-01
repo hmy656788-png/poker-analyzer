@@ -3,8 +3,6 @@
  * 连接 poker.js 和 simulator.js 到 HTML 界面
  */
 // @ts-check
-import { setupPrecompute } from './modules/precompute.js';
-import { setupAIAdvisor } from './modules/ai-advisor.js';
 
 const app = (() => {
     let signatureTimer = null;
