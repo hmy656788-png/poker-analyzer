@@ -47,9 +47,10 @@ function isAllowedSource(request, env) {
     const referer = request.headers.get('Referer') || '';
     const secFetchSite = String(request.headers.get('Sec-Fetch-Site') || '').toLowerCase();
 
-    if (!hasExpectedRequestMarker(request)) {
-        return false;
-    }
+
+    // X-Poker-Request header 是可选的额外校验（不强制，兼容旧版客户端）
+
+
 
     if (requestOrigin) {
         allowedOrigins.add(requestOrigin);
