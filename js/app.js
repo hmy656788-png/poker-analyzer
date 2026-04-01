@@ -1502,6 +1502,60 @@ const app = (() => {
         }
     }
 
+    // 内联 AI 回退（当 ai-advisor.js 模块因缓存问题未加载时）
+    function inlineFallbackAskAI() {
+        var overlay = getEl('aiPanelOverlay');
+        var panel = getEl('aiPanel');
+        var typing = getEl('aiTyping');
+        var content = getEl('aiContent');
+        if (!panel) return;
+        if (overlay) overlay.style.display = 'block';
+        panel.style.display = 'flex';
+        if (typing) typing.classList.remove('hidden');
+        if (content) { content.classList.remove('visible'); content.innerHTML = ''; }
+
+        var handDesc = state.hand.filter(Boolean).map(function(c) {
+            var rn = (typeof RANK_NAMES !== 'undefined' ? RANK_NAMES : window.RANK_NAMES) || [];
+            var ss = (typeof SUIT_SYMBOLS !== 'undefined' ? SUIT_SYMBOLS : window.SUIT_SYMBOLS) || {};
+            return (rn[c.rank] || c.rank) + (ss[c.suit] || '');
+        }).join(' ') || '未选择';
+        var prompt = '我在德州扑克中拿到手牌 ' + handDesc + '，请简要分析这手牌的强度和建议打法。';
+
+        fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                model: 'deepseek-chat',
+                messages: [{ role: 'user', content: prompt }],
+                stream: false,
+                max_tokens: 800,
+                temperature: 0.7
+            })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (typing) typing.classList.add('hidden');
+            if (content) {
+                content.classList.add('visible');
+                var text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '无响应';
+                content.innerHTML = '<p>' + text.replace(/\n/g, '<br>') + '</p>';
+            }
+        })
+        .catch(function(err) {
+            if (typing) typing.classList.add('hidden');
+            if (content) {
+                content.classList.add('visible');
+                content.innerHTML = '<p style="color:#ef4444;">❌ AI 请求失败：' + (err.message || err) + '</p>';
+            }
+        });
+    }
+    function inlineFallbackCloseAI() {
+        var overlay = getEl('aiPanelOverlay');
+        var panel = getEl('aiPanel');
+        if (overlay) overlay.style.display = 'none';
+        if (panel) panel.style.display = 'none';
+    }
+
     const aiAdvisor = typeof setupAIAdvisor === 'function' 
         ? setupAIAdvisor({
             state, getEl, vibrate, getStageText, formatChips, 
@@ -1510,7 +1564,7 @@ const app = (() => {
             SUIT_SYMBOLS: window.SUIT_SYMBOLS || SUIT_SYMBOLS, 
             SUITS: window.SUITS || SUITS
         })
-        : { askAI() { alert('AI 模块未加载，请清除浏览器缓存后刷新'); }, closeAI() {} };
+        : { askAI: inlineFallbackAskAI, closeAI: inlineFallbackCloseAI };
 
     const installGuide = typeof setupInstallGuide === 'function'
         ? setupInstallGuide({ state, getEl })
