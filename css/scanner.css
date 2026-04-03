@@ -130,9 +130,31 @@
     min-height: 1.5rem;
 }
 
-/* Updated label actions for clear and scan buttons */
-.label-actions {
+/* Scan pill button — sits in panel-title row */
+.btn-scan-pill {
+    margin-left: auto;
+    flex-shrink: 0;
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--accent-blue);
+    font-size: 0.76rem;
+    font-weight: 600;
+    padding: 7px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
     display: flex;
-    gap: 8px;
     align-items: center;
+    gap: 4px;
+}
+
+.btn-scan-pill:hover {
+    background: rgba(59, 130, 246, 0.18);
+    border-color: rgba(59, 130, 246, 0.55);
+    color: #60a5fa;
+}
+
+.btn-scan-pill:active {
+    transform: scale(0.95);
 }

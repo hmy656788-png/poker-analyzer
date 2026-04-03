@@ -485,6 +485,15 @@ const app = (() => {
         updateBoardTexture();
     }
 
+    function renderSelectedCards() {
+        renderHandSlots();
+        renderCommunitySlots();
+        renderCardPicker();
+        updateAnalyzeButton();
+        updateStageCounts();
+        updateStageProgress();
+    }
+
     // ===== 牌面纹理 =====
     function updateBoardTexture() {
         const panel = getEl('boardTexturePanel');

@@ -20,7 +20,7 @@
         .app-boot__bar{position:relative;width:min(220px,100%);height:6px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
         .app-boot__mark{display:grid;place-items:center;width:68px;height:68px;border-radius:20px;background:linear-gradient(135deg,rgba(255,204,0,.2),rgba(51,136,255,.18));color:#ffcc00;font-size:2rem}
     </style>
-    <link rel="stylesheet" href="css/style.css?v=20260421">
+    <link rel="stylesheet" href="css/style.css?v=20260424">
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♠</text></svg>">
     
@@ -59,7 +59,7 @@
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js?v=20260421')
+                navigator.serviceWorker.register('/sw.js?v=20260424')
                     .then(registration => {
                         console.log('ServiceWorker 注册成功 🎉');
                         registration.update().catch(() => { });
@@ -142,15 +142,13 @@
                     <div class="panel-title">
                         <span class="icon gold"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
                         你的手牌
+                        <button class="btn-scan-pill" onclick="app.openScanner('hand')">📷 扫一扫</button>
                     </div>
 
                     <div class="card-selection-area">
                         <div class="card-selection-label">
                             <span>选择2张手牌</span>
-                            <div class="label-actions">
-                                <button class="btn btn-secondary btn-clear-inline" onclick="app.openScanner('hand')">📷 识图</button>
-                                <button class="btn btn-secondary btn-clear-inline" onclick="app.clearHand()">清除</button>
-                            </div>
+                            <button class="btn btn-secondary btn-clear-inline" onclick="app.clearHand()">清除</button>
                         </div>
 
                         <div class="selected-cards" id="handCards">
@@ -167,6 +165,7 @@
                     <div class="panel-title">
                         <span class="icon green"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 12 12 17 22 12"/><polyline points="2 17 12 22 22 17"/></svg></span>
                         公共牌
+                        <button class="btn-scan-pill" onclick="app.openScanner('community')">📷 扫一扫</button>
                     </div>
 
                     <div class="stage-tabs">
@@ -184,10 +183,7 @@
                     <div class="card-selection-area">
                         <div class="card-selection-label">
                             <span id="communityLabel">翻牌 - 选择3张公共牌</span>
-                            <div class="label-actions">
-                                <button class="btn btn-secondary btn-clear-inline" onclick="app.openScanner('community')">📷 识图</button>
-                                <button class="btn btn-secondary btn-clear-inline" onclick="app.clearCommunity()">清除公共牌</button>
-                            </div>
+                            <button class="btn btn-secondary btn-clear-inline" onclick="app.clearCommunity()">清除公共牌</button>
                         </div>
                         <div class="selected-cards" id="communityCards">
                             <div class="selected-card-slot" data-slot="community-0"
@@ -572,7 +568,7 @@
     <script src="js/modules/ai-advisor.js?v=20260420"></script>
     <script src="js/modules/scanner.js?v=20260420"></script>
     <script src="js/modules/install-guide.js?v=20260409"></script>
-    <script src="js/app.js?v=20260421"></script>
+    <script src="js/app.js?v=20260424"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             window.requestAnimationFrame(() => {

@@ -304,15 +304,9 @@
     }
 
     .card-selection-label {
-        flex-direction: column;
+        flex-direction: row;
         gap: 8px;
-        align-items: flex-start;
-    }
-
-    .label-actions {
-        width: 100%;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+        align-items: center;
     }
 
     .btn-clear-inline {
