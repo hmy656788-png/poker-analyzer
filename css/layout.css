@@ -309,6 +309,12 @@
         align-items: flex-start;
     }
 
+    .label-actions {
+        width: 100%;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+    }
+
     .btn-clear-inline {
         width: 100%;
         justify-content: center;
