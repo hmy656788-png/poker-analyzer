@@ -645,7 +645,10 @@ const app = (() => {
         const handReady = state.hand.every(c => c !== null);
 
         if (actionButtons) {
+            actionButtons.classList.toggle('is-hidden', !handReady);
             actionButtons.hidden = !handReady;
+            actionButtons.setAttribute('aria-hidden', handReady ? 'false' : 'true');
+            actionButtons.style.display = handReady ? '' : 'none';
         }
         document.body.classList.toggle('hand-ready', handReady);
 

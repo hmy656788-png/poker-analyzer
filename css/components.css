@@ -561,6 +561,13 @@
     display: none !important;
 }
 
+.action-buttons.is-hidden {
+    display: none !important;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
 .btn {
     border: none;
     padding: 12px 24px;
