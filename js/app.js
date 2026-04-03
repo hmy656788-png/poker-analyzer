@@ -974,7 +974,8 @@ const app = (() => {
                     const data = e.data || {};
                     const workerId = Number.isInteger(data.workerId) ? data.workerId : i;
                     if (data.type === 'PROGRESS') {
-                        progressByWorker[workerId] = Math.min(plan.chunks[workerId], data.completed || 0);
+                        var completed = Number(data.completed);
+                        progressByWorker[workerId] = Math.min(plan.chunks[workerId], Number.isFinite(completed) ? completed : 0);
                         refreshProgress();
                         return;
                     }
@@ -1552,6 +1553,8 @@ const app = (() => {
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
     }
+    // Expose globally so ai-advisor.js can reuse the same escape function
+    window.__escapeHTML = escapeInlineAIText;
 
     function formatInlineShortNumber(value) {
         var num = Number(value);
@@ -2076,7 +2079,7 @@ const app = (() => {
                 var message = err && err.name === 'AbortError'
                     ? '请求超时，请稍后重试'
                     : (err && err.message ? err.message : err);
-                content.innerHTML = '<p style="color:#ef4444;">❌ AI 请求失败：' + message + '</p>';
+                content.innerHTML = '<p style="color:#ef4444;">❌ AI 请求失败：' + escapeInlineAIText(String(message || '未知错误')).slice(0, 300) + '</p>';
             }
         })
         .finally(function() {

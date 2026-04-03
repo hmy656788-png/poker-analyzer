@@ -17,14 +17,17 @@ function setupAIAdvisor({
     const AI_CACHE_MAX_ENTRIES = 40;
     const inFlightRequests = new Map();
 
-    function escapeHTML(str) {
-        return String(str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
+    // Use shared escapeHTML — defined globally; fall back to inline copy if missing
+    const escapeHTML = typeof window.__escapeHTML === 'function'
+        ? window.__escapeHTML
+        : function(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        };
 
     function simpleMarkdown(text) {
         const safeText = escapeHTML(text);
@@ -253,8 +256,8 @@ function setupAIAdvisor({
 
     function createErrorView(message, hint = '') {
         return {
-            message: String(message || '未知错误').slice(0, 280),
-            hint: String(hint || '').slice(0, 280)
+            message: String(message || '未知错误').slice(0, 300),
+            hint: String(hint || '').slice(0, 300)
         };
     }
 

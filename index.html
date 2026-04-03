@@ -44,9 +44,7 @@
             if (window.crypto && typeof window.crypto.getRandomValues === 'function') {
                 window.crypto.getRandomValues(bytes);
             } else {
-                for (let index = 0; index < bytes.length; index += 1) {
-                    bytes[index] = Math.floor(Math.random() * 256);
-                }
+                throw new Error('crypto.getRandomValues is required but not available');
             }
 
             const token = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
@@ -279,7 +277,7 @@
                             <span class="field-label">当前底池</span>
                             <div class="input-prefix">
                                 <span class="prefix-chip">积分</span>
-                                <input type="number" id="potSizeInput" min="0" step="0.5" value="10"
+                                <input type="number" id="potSizeInput" min="0" max="100000" step="0.5" value="10"
                                     oninput="app.updateSituationField('potSize', this.value)">
                             </div>
                         </label>
@@ -287,7 +285,7 @@
                             <span class="field-label">需跟注金额</span>
                             <div class="input-prefix">
                                 <span class="prefix-chip">积分</span>
-                                <input type="number" id="callAmountInput" min="0" step="0.5" value="5"
+                                <input type="number" id="callAmountInput" min="0" max="100000" step="0.5" value="5"
                                     oninput="app.updateSituationField('callAmount', this.value)">
                             </div>
                         </label>
@@ -295,7 +293,7 @@
                             <span class="field-label">你的剩余积分（可选）</span>
                             <div class="input-prefix">
                                 <span class="prefix-chip">积分</span>
-                                <input type="number" id="stackInput" min="1" step="1" value="100"
+                                <input type="number" id="stackInput" min="1" max="100000" step="1" value="100"
                                     oninput="app.updateSituationField('effectiveStackBB', this.value)">
                             </div>
                             <span class="field-help">不确定可保持默认值 100</span>
