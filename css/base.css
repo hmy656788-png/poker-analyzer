@@ -53,6 +53,13 @@
     box-sizing: border-box;
 }
 
+html {
+    width: 100%;
+    overflow-x: hidden;
+    overflow-x: clip;
+    background: var(--bg-primary);
+}
+
 button,
 .btn,
 .stage-tab,
@@ -68,11 +75,24 @@ body {
     background: var(--bg-primary);
     color: var(--text-primary);
     min-height: 100vh;
+    width: 100%;
+    max-width: 100%;
     overflow-x: hidden;
+    overflow-x: clip;
     line-height: 1.6;
     -webkit-tap-highlight-color: transparent;
     -webkit-overflow-scrolling: touch;
     scroll-behavior: smooth;
+}
+
+main,
+.container,
+.main-layout,
+.left-column,
+.right-column,
+.panel {
+    min-width: 0;
+    max-width: 100%;
 }
 
 /* ===== 背景装饰 ===== */
@@ -111,4 +131,3 @@ body::before {
 .mt-16 { margin-top: 16px; }
 .flex-center { display: flex; align-items: center; justify-content: center; }
 .mr-6 { margin-right: 6px; }
-

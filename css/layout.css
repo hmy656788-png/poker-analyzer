@@ -126,6 +126,10 @@
     margin-bottom: 32px;
 }
 
+.main-layout > * {
+    min-width: 0;
+}
+
 @media (max-width: 1024px) {
     .main-layout {
         grid-template-columns: 1fr;
@@ -238,7 +242,15 @@
     .main-layout {
         display: flex;
         flex-direction: column;
+        gap: 16px;
         padding-bottom: 0;
+    }
+
+    .left-column,
+    .right-column,
+    .results-panel {
+        width: 100%;
+        min-width: 0;
     }
 
     .right-column {
@@ -253,6 +265,8 @@
     /* 牌选择器：8列更紧凑，保持触控面积 */
     .card-picker-grid {
         grid-template-columns: repeat(8, 1fr);
+        width: 100%;
+        min-width: 0;
         gap: 3px;
     }
 
@@ -275,6 +289,7 @@
     .selected-cards {
         gap: 8px;
         min-height: 82px;
+        flex-wrap: wrap;
         justify-content: center;
     }
 
@@ -289,24 +304,36 @@
     }
 
     .card-selection-label {
+        flex-direction: column;
         gap: 8px;
         align-items: flex-start;
     }
 
     .btn-clear-inline {
+        width: 100%;
+        justify-content: center;
         min-height: 42px;
         padding: 8px 12px;
     }
 
     /* 阶段进度条 */
     .stage-progress {
+        overflow: hidden;
         padding: 8px 12px;
         gap: 4px;
         margin-bottom: 12px;
+        max-width: 100%;
     }
 
     .stage-name {
         font-size: 0.65rem;
+        white-space: normal;
+        text-align: center;
+        min-width: 0;
+    }
+
+    .stage-line {
+        min-width: 12px;
     }
 
     /* 花色过滤按钮 */
@@ -342,9 +369,15 @@
         border-top: 1px solid rgba(255, 255, 255, 0.1);
         z-index: 100;
         margin: 0;
-        display: flex;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
         gap: 12px;
         box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.5);
+    }
+
+    .action-buttons .btn {
+        min-width: 0;
+        justify-content: center;
     }
 
     .btn {
@@ -356,14 +389,27 @@
 
     /* 为主体内容底部留出空间 */
     .main-layout {
-        padding-bottom: 80px;
+        padding-bottom: 24px;
+        transition: padding-bottom 0.25s ease;
+    }
+
+    body.hand-ready .main-layout {
+        padding-bottom: calc(96px + env(safe-area-inset-bottom));
     }
 
     /* 对手选择器更紧凑 */
     .opponent-selector {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
         padding: 12px;
         gap: 10px;
         margin-bottom: 12px;
+    }
+
+    .opponent-selector label,
+    .opponent-count {
+        white-space: nowrap;
     }
 
     .situation-grid {
@@ -371,9 +417,16 @@
         gap: 12px;
     }
 
+    .panel-title {
+        flex-wrap: wrap;
+        align-items: flex-start;
+        row-gap: 8px;
+    }
+
     .situation-toggle-btn {
         font-size: 0.72rem;
         padding: 6px 9px;
+        margin-left: 0;
     }
 
     .input-prefix {
@@ -434,7 +487,7 @@
 
     .preflop-grid-wrapper {
         padding: 4px 10px 10px;
-        -webkit-overflow-scrolling: touch;
+        overflow-x: hidden;
     }
 
     .preflop-grid {
@@ -456,12 +509,16 @@
     }
 
     .legend {
+        justify-content: flex-start;
+        flex-wrap: wrap;
+        overflow: visible;
         gap: 8px;
-        padding: 0 10px;
+        padding: 0 10px 4px;
     }
 
     .legend-item {
         font-size: 0.68rem;
+        white-space: normal;
     }
 
     .footer {
@@ -517,9 +574,13 @@
         padding: 12px;
     }
 
-    /* 选牌器：更紧凑的 8 列布局 */
+    .main-layout {
+        gap: 14px;
+    }
+
+    /* 选牌器：更紧凑的 7 列布局 */
     .card-picker-grid {
-        grid-template-columns: repeat(8, 1fr);
+        grid-template-columns: repeat(7, 1fr);
         gap: 2px;
     }
 
@@ -539,6 +600,11 @@
     .selected-cards {
         gap: 6px;
         min-height: 68px;
+    }
+
+    .stage-progress {
+        padding: 8px;
+        gap: 4px;
     }
 
     .selected-card-slot {
@@ -626,14 +692,26 @@
         font-size: 0.8rem;
     }
 
+    .opponent-selector {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .opponent-selector label {
+        grid-column: 1 / -1;
+    }
+
     .panel-title {
         font-size: 1rem;
         margin-bottom: 14px;
+        align-items: center;
     }
 
     .situation-toggle-btn {
         font-size: 0.68rem;
         padding: 6px 8px;
+        width: 100%;
+        justify-content: center;
+        text-align: center;
     }
 
     .panel-title .icon {
@@ -641,11 +719,25 @@
         height: 28px;
         font-size: 0.85rem;
     }
+
+    .action-buttons {
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+    }
+
+    .btn {
+        width: 100%;
+    }
+
+    .legend {
+        padding: 0 4px 4px;
+    }
 }
 
 @media (max-width: 360px) {
     .card-picker-grid {
-        grid-template-columns: repeat(7, 1fr);
+        grid-template-columns: repeat(6, 1fr);
     }
 }
 
@@ -717,4 +809,3 @@
         transition: none !important;
     }
 }
-

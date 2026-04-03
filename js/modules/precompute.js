@@ -2,7 +2,8 @@
 
 function setupPrecompute({ 
     isPreflopCacheEligible, normalizeOpponentProfile, getStartingHandKey, 
-    DEFAULT_PREFLOP_PRECOMPUTE_TARGETS, buildAnalysisCacheUrl, ANALYSIS_CACHE_NAME
+    DEFAULT_PREFLOP_PRECOMPUTE_TARGETS, buildAnalysisCacheUrl, createAnalysisCacheEntry,
+    isAnalysisCacheEntryValid, ANALYSIS_CACHE_NAME
 }) {
     const HOT_HAND_USAGE_KEY = 'poker.hotPreflopUsage.v1';
     const PRECOMPUTE_IDLE_DELAY_MS = 1200;
@@ -119,10 +120,14 @@ function setupPrecompute({
         if (!cacheUrl) return null;
 
         try {
-            const response = await caches.match(cacheUrl);
+            const cache = await caches.open(ANALYSIS_CACHE_NAME);
+            const response = await cache.match(cacheUrl);
             if (!response) return null;
             const payload = await response.json();
-            if (!payload || !payload.result) return null;
+            if (!isAnalysisCacheEntryValid(payload)) {
+                await cache.delete(cacheUrl);
+                return null;
+            }
             return payload;
         } catch (error) {
             return null;
@@ -143,10 +148,11 @@ function setupPrecompute({
 
         try {
             const cache = await caches.open(ANALYSIS_CACHE_NAME);
+            const entry = createAnalysisCacheEntry(payload);
             await cache.put(
                 cacheUrl,
                 new Response(JSON.stringify({
-                    ...payload,
+                    ...entry,
                     cacheUrl
                 }), {
                     headers: {

@@ -1,6 +1,7 @@
 importScripts('/js/poker.js', '/js/simulator.js');
 
-const SW_VERSION = '20260401';
+const SW_VERSION = '20260421';
+const STATIC_ASSET_VERSION = '20260421';
 const STATIC_CACHE = `poker-static-${SW_VERSION}`;
 const RUNTIME_CACHE = `poker-runtime-${SW_VERSION}`;
 const ANALYSIS_CACHE = `poker-analysis-${ANALYSIS_CACHE_VERSION}`;
@@ -11,12 +12,19 @@ const CORE_ASSETS = [
     '/',
     '/index.html',
     '/css/style.css',
+    `/css/style.css?v=${STATIC_ASSET_VERSION}`,
+    '/css/scanner.css',
+    `/css/scanner.css?v=${STATIC_ASSET_VERSION}`,
     '/js/poker.js',
     '/js/simulator.js',
     '/js/worker.js',
     '/js/app.js',
+    `/js/app.js?v=${STATIC_ASSET_VERSION}`,
     '/js/modules/precompute.js',
     '/js/modules/ai-advisor.js',
+    `/js/modules/ai-advisor.js?v=${STATIC_ASSET_VERSION}`,
+    '/js/modules/scanner.js',
+    `/js/modules/scanner.js?v=20260420`,
     '/js/modules/install-guide.js',
     '/wasm/montecarlo.wasm',
     '/manifest.json',
@@ -33,9 +41,13 @@ async function writeAnalysisCacheEntry(entry) {
     if (!cacheUrl) return false;
 
     const cache = await caches.open(ANALYSIS_CACHE);
+    const payload = createAnalysisCacheEntry({
+        ...entry,
+        cacheUrl
+    });
     await cache.put(
         cacheUrl,
-        new Response(JSON.stringify(entry), {
+        new Response(JSON.stringify(payload), {
             headers: {
                 'Content-Type': 'application/json',
                 'Cache-Control': 'no-store'
@@ -49,7 +61,19 @@ async function hasAnalysisCacheEntry(cacheUrl) {
     if (!cacheUrl) return false;
     const cache = await caches.open(ANALYSIS_CACHE);
     const cached = await cache.match(cacheUrl);
-    return !!cached;
+    if (!cached) return false;
+
+    try {
+        const payload = await cached.json();
+        if (isAnalysisCacheEntryValid(payload)) {
+            return true;
+        }
+    } catch (error) {
+        // fall through and delete the invalid entry
+    }
+
+    await cache.delete(cacheUrl);
+    return false;
 }
 
 async function precomputeEntry(entry) {
@@ -78,8 +102,6 @@ async function precomputeEntry(entry) {
     );
 
     await writeAnalysisCacheEntry({
-        cacheUrl,
-        cachedAt: new Date().toISOString(),
         handKey: entry.handKey,
         stage: 'preflop',
         myHand,

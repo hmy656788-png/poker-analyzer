@@ -3,12 +3,19 @@
 function setupAIAdvisor({ 
     state, getEl, vibrate, getStageText, formatChips, 
     calculateDecisionMetrics, getSituationSnapshot, getOpponentProfile, 
+    buildDefaultPreflopAdviceText,
     RANK_NAMES, SUIT_SYMBOLS, SUITS 
 }) {
     const AI_API_URL = '/api/chat';
     const REQUEST_MARKER = 'ai-advisor';
     const STREAM_UNSAFE_UA_RE = /MicroMessenger|QQ\/|QQBrowser|MetaSr|WebView/i;
     const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+    const AI_PROMPT_VERSION = '20260404-detail-1';
+    const AI_CACHE_STORAGE_KEY = 'poker.aiAdviceCache.v8';
+    const AI_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+    const AI_CACHE_FRESH_MS = 20 * 60 * 1000;
+    const AI_CACHE_MAX_ENTRIES = 40;
+    const inFlightRequests = new Map();
 
     function escapeHTML(str) {
         return String(str)
@@ -25,6 +32,7 @@ function setupAIAdvisor({
             .replace(/^### (.+)$/gm, '<h3>$1</h3>')
             .replace(/^## (.+)$/gm, '<h3>$1</h3>')
             .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/^([^\n：:]{2,14}[：:])/gm, '<strong>$1</strong>')
             .replace(/`(.+?)`/g, '<code>$1</code>')
             .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
             .replace(/^- (.+)$/gm, '<li>$1</li>')
@@ -49,6 +57,200 @@ function setupAIAdvisor({
             .trim();
     }
 
+    function getCsrfToken() {
+        if (typeof window.__getPokerCsrfToken === 'function') {
+            return String(window.__getPokerCsrfToken() || '');
+        }
+        return '';
+    }
+
+    function readAIAdviceCache(cacheKey) {
+        try {
+            const raw = localStorage.getItem(AI_CACHE_STORAGE_KEY);
+            if (!raw) return null;
+
+            const store = JSON.parse(raw);
+            const entry = store && store[cacheKey];
+            if (!entry || typeof entry.text !== 'string' || !entry.ts) {
+                return null;
+            }
+
+            const ageMs = Date.now() - entry.ts;
+            if (ageMs > AI_CACHE_TTL_MS) {
+                return null;
+            }
+
+            return {
+                text: entry.text,
+                ts: entry.ts,
+                ageMs,
+                isFresh: ageMs <= AI_CACHE_FRESH_MS
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    function writeAIAdviceCache(cacheKey, text) {
+        try {
+            const raw = localStorage.getItem(AI_CACHE_STORAGE_KEY);
+            const store = raw ? JSON.parse(raw) : {};
+
+            store[cacheKey] = {
+                text: String(text || ''),
+                ts: Date.now()
+            };
+
+            const nextStore = Object.fromEntries(
+                Object.entries(store)
+                    .sort(([, left], [, right]) => (right?.ts || 0) - (left?.ts || 0))
+                    .slice(0, AI_CACHE_MAX_ENTRIES)
+            );
+
+            localStorage.setItem(AI_CACHE_STORAGE_KEY, JSON.stringify(nextStore));
+        } catch {
+            // ignore cache persistence failures
+        }
+    }
+
+    function renderAIContent(text, content) {
+        content.innerHTML = simpleMarkdown(text);
+        const body = getEl('aiPanelBody');
+        if (body) body.scrollTop = body.scrollHeight;
+    }
+
+    function showAIWaiting(typing, content) {
+        if (typing) typing.classList.remove('hidden');
+        if (content) {
+            content.classList.remove('visible');
+            content.innerHTML = '';
+        }
+    }
+
+    function revealAIContent(content, typing) {
+        if (typing) typing.classList.add('hidden');
+        if (content) content.classList.add('visible');
+    }
+
+    function getAIContextMode() {
+        const boardCount = state.community.filter(Boolean).length;
+        if (state.situationEnabled) {
+            return 'decision';
+        }
+        return boardCount === 0 ? 'preflop-default' : 'postflop-default';
+    }
+
+    function getCurrentHandKey() {
+        if (!state.hand[0] || !state.hand[1]) return '';
+        try {
+            return getStartingHandKey(state.hand[0], state.hand[1]);
+        } catch {
+            return '';
+        }
+    }
+
+    function getPreflopHandFeature(handKey) {
+        const normalized = String(handKey || '').toUpperCase();
+        if (!normalized) return '未知手牌';
+
+        const isPair = normalized.length === 2;
+        const isSuited = normalized.endsWith('S');
+        const first = normalized[0];
+        const second = normalized[1];
+        const broadway = 'AKQJT';
+
+        if (isPair) return '口袋对子';
+        if (first === 'A' && isSuited && ['2', '3', '4', '5'].includes(second)) return '同花轮子A';
+        if (first === 'A' && !isSuited) return '非同花弱A';
+        if (first === 'A' && isSuited) return '同花A高';
+        if (broadway.includes(first) && broadway.includes(second)) return isSuited ? '同花高张' : '高张组合';
+        if (isSuited) return '同花投机牌';
+        return '普通非同花牌';
+    }
+
+    function buildLocalPreflopAdvice() {
+        if (typeof buildDefaultPreflopAdviceText === 'function') {
+            const injectedAdvice = String(buildDefaultPreflopAdviceText() || '').trim();
+            if (injectedAdvice) {
+                return injectedAdvice;
+            }
+        }
+
+        const handKey = getCurrentHandKey();
+        const equity = Number(state.lastAnalysis?.result?.winRate || 0);
+        const opponents = Math.max(1, Number(state.numOpponents) || 1);
+        const feature = getPreflopHandFeature(handKey);
+        const sizeLine = opponents <= 2 ? '开局尺寸: 未知位置先按2.2-2.5BB' : '开局尺寸: 未知位置先按2.3-2.6BB';
+
+        let actionLine = '';
+        let reasonLine2 = '';
+        let reactionLine = '';
+
+        if (equity >= 58) {
+            actionLine = opponents === 1
+                ? '标准动作: 单挑首入池可正常开局，前位别机械放宽'
+                : '标准动作: 未知位置下多数位置可开，前位保持频率';
+            reasonLine2 = `理由2: ${feature}具备一定主动入池价值，但仍要尊重位置`;
+            reactionLine = '若遭反击: 小中码3bet可继续，过大压力再收紧';
+        } else if (equity >= 52) {
+            actionLine = '标准动作: 未知位置下以中后位开局为主，前位别放太宽';
+            reasonLine2 = `理由2: ${feature}更像位置牌，不能只看单挑胜率`;
+            reactionLine = '若遭反击: 默认别轻易4bet，位置差或大尺度多弃';
+        } else if (equity >= 46) {
+            actionLine = '标准动作: 以后位偷盲为主，未知位置默认不打开';
+            reasonLine2 = `理由2: ${feature}更依赖弃牌率和位置，不适合无信息扩大底池`;
+            reactionLine = '若遭反击: 被3bet大多直接放弃';
+        } else {
+            actionLine = '标准动作: 未知位置下默认弃牌';
+            reasonLine2 = `理由2: ${feature}在未知位置和未知动作下容错较低`;
+            reactionLine = '若遭反击: 这类牌在无信息时应直接收手';
+        }
+
+        return [
+            actionLine,
+            sizeLine,
+            `理由1: 当前单挑模拟约 ${Number.isFinite(equity) ? equity.toFixed(1).replace(/\\.0$/, '') : '-'}%，别直接当成全位置开局许可`,
+            reasonLine2,
+            reactionLine
+        ].join('\n');
+    }
+
+    function buildPreflopBaselineSummary() {
+        return buildLocalPreflopAdvice()
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .join(' | ')
+            .slice(0, 420);
+    }
+
+    function getBoardTextureSummary() {
+        const boardSize = state.community.filter(Boolean).length;
+        if (boardSize < 3) return '';
+
+        const label = getEl('textureLabel');
+        const score = getEl('textureScore');
+        const textureLabel = label ? String(label.textContent || '').trim() : '';
+        const textureScore = score ? String(score.textContent || '').trim() : '';
+        if (!textureLabel && !textureScore) return '';
+        return textureScore ? `${textureLabel} ${textureScore}/100` : textureLabel;
+    }
+
+    function getSharedRequest(cacheKey, createRequest) {
+        if (inFlightRequests.has(cacheKey)) {
+            return inFlightRequests.get(cacheKey);
+        }
+
+        const request = Promise.resolve()
+            .then(createRequest)
+            .finally(() => {
+                inFlightRequests.delete(cacheKey);
+            });
+
+        inFlightRequests.set(cacheKey, request);
+        return request;
+    }
+
     function createErrorView(message, hint = '') {
         return {
             message: String(message || '未知错误').slice(0, 280),
@@ -68,8 +270,8 @@ function setupAIAdvisor({
 
         if (status === 403) {
             return createErrorView(
-                '当前来源未被 AI 接口允许。',
-                '请检查 Cloudflare 环境变量 ALLOWED_ORIGINS，并确认页面和函数来自同一站点。'
+                detail ? `AI 请求被安全策略拦截：${detail}` : 'AI 请求被安全策略拦截。',
+                '请刷新页面后重试，并确认当前页面和 API 来自同一站点。'
             );
         }
 
@@ -159,19 +361,50 @@ function setupAIAdvisor({
         );
     }
 
-    function buildAIRequestPayload(prompt, stream) {
+    // ===== AI 请求配置 =====
+
+    function isEmbeddedBrowser() {
+        return STREAM_UNSAFE_UA_RE.test(navigator.userAgent || '');
+    }
+
+    function getAIRequestProfile(mode = 'decision') {
+        const embedded = isEmbeddedBrowser();
+        const isDecisionMode = mode === 'decision';
+        const isPreflopDefaultMode = mode === 'preflop-default';
+        return {
+            compactPrompt: embedded,
+            preferStreaming: shouldPreferStreaming(),
+            timeoutMs: 30000,
+            maxTokens: embedded ? 420 : (isDecisionMode ? 760 : 680),
+            temperature: embedded ? 0.08 : (isDecisionMode ? 0.16 : 0.13),
+            cacheFreshMs: embedded ? 12 * 60 * 1000 : AI_CACHE_FRESH_MS,
+            systemPrompt: embedded
+                ? (isDecisionMode
+                    ? '你是严谨的德州扑克顾问。只能依据给定数据回答，不虚构历史动作、弃牌率或读牌。当前模式已给出底池、跟注金额和程序建议，你必须优先围绕“继续门槛、跟注赔率、CallEV、SPR、牌力/听牌、牌面纹理”给结论，不能把“继续门槛”说成“加注门槛”。严格输出8行：核心结论、推荐动作、推荐尺寸、赔率与门槛、牌力解读、下一街计划、若遭反击、最大风险。每行1到2短句，总字数不超过320字。'
+                    : (isPreflopDefaultMode
+                        ? '你是严谨的德州扑克翻前顾问。只能依据给定数据回答，不虚构前人动作。若未提供动作历史，默认按100BB无人入池(open pot)处理，给标准开局建议，不要把建议写成面对下注后的弃牌/跟注结论。严格输出8行：核心结论、推荐开局、位置建议、开局尺寸、牌力依据、手牌特点、若遇反击、补充说明。每行1到2短句，总字数不超过320字。'
+                        : '你是严谨的德州扑克翻后顾问。只能依据给定数据回答，不虚构对手下注或历史动作。若未提供跟注金额，只能给默认打法与优先尺寸/控池计划，不要输出纯弃牌/纯跟注百分比。严格输出8行：牌力定位、默认打法、推荐尺寸、关键依据1、关键依据2、危险转牌、下一街计划、最大风险。每行1到2短句，总字数不超过320字。'))
+                : (isDecisionMode
+                    ? '你是严谨的德州扑克顾问。只能依据给定数据回答，不虚构历史动作、弃牌率或读牌。当前模式已给出底池、跟注金额和程序建议，你必须优先围绕“继续门槛、跟注赔率、CallEV、SPR、牌力/听牌、牌面纹理”给结论，不能把“继续门槛”说成“加注门槛”。严格输出10行：核心结论、推荐动作、推荐尺寸、赔率与门槛、CallEV解读、牌力定位、牌面纹理/阻断、下一街计划、若遭反击、最大风险。每行1到2短句，结论必须和胜率、跟注赔率、CallEV一致，总字数不超过560字。'
+                    : (isPreflopDefaultMode
+                        ? '你是严谨的德州扑克翻前顾问。只能依据给定数据回答，不虚构前人动作。若未提供动作历史，默认按100BB无人入池(open pot)处理，给标准开局建议，不要把建议写成面对下注后的弃牌/跟注结论。严格输出10行：核心结论、推荐开局、位置建议、开局尺寸、牌力档次、手牌特点、多人修正、若遇3bet、翻后重点、补充说明。每行1到2短句，总字数不超过520字。'
+                        : '你是严谨的德州扑克翻后顾问。只能依据给定数据回答，不虚构对手下注或历史动作。若未提供跟注金额，只能给默认打法与优先尺寸/控池计划，不要输出纯弃牌/纯跟注百分比。严格输出10行：牌力定位、默认打法、推荐尺寸、为什么这样打、听牌/阻断、危险转牌、转牌计划、河牌计划、若遭加压、最大风险。每行1到2短句，总字数不超过560字。'))
+        };
+    }
+
+    function buildAIRequestPayload(prompt, stream, profile) {
         return {
             model: 'deepseek-chat',
             messages: [
                 {
                     role: 'system',
-                    content: '你是高水平德州扑克教练。回答必须量化：动作频率、下注尺寸、诈唬频率、下一街计划都要给出具体数字，结论要与胜率/EV一致，输出适合手机阅读。'
+                    content: profile.systemPrompt
                 },
                 { role: 'user', content: prompt }
             ],
             stream,
-            max_tokens: 1500,
-            temperature: 0.7,
+            max_tokens: profile.maxTokens,
+            temperature: profile.temperature,
         };
     }
 
@@ -181,7 +414,21 @@ function setupAIAdvisor({
         return hasReadableStream && !STREAM_UNSAFE_UA_RE.test(ua);
     }
 
-    async function consumeStreamingResponse(response, content) {
+    function formatShortNumber(value) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return '-';
+        return Number.isInteger(num) ? String(num) : num.toFixed(1).replace(/\.0$/, '');
+    }
+
+    function formatProfileToken(profileName, profileInfo) {
+        const key = String(profileName || '').trim();
+        if (key) return key;
+        return String(profileInfo && profileInfo.label ? profileInfo.label : 'random');
+    }
+
+    // ===== 响应处理 =====
+
+    async function consumeStreamingResponse(response, content, typing) {
         if (!response.body || typeof response.body.getReader !== 'function') {
             throw new Error('当前浏览器不支持流式响应');
         }
@@ -190,6 +437,7 @@ function setupAIAdvisor({
         const decoder = new TextDecoder();
         let fullText = '';
         let buffered = '';
+        let hasStarted = false;
 
         while (true) {
             const { done, value } = await reader.read();
@@ -212,6 +460,10 @@ function setupAIAdvisor({
                     const parsed = JSON.parse(data);
                     const delta = parsed.choices?.[0]?.delta?.content || '';
                     if (!delta) continue;
+                    if (!hasStarted) {
+                        revealAIContent(content, typing);
+                        hasStarted = true;
+                    }
                     fullText += delta;
                     content.innerHTML = simpleMarkdown(fullText);
                     const body = getEl('aiPanelBody');
@@ -223,7 +475,7 @@ function setupAIAdvisor({
         return fullText;
     }
 
-    async function consumeJsonResponse(response, content) {
+    async function consumeJsonResponse(response, content, typing) {
         const payload = await response.json();
         const fullText = payload?.choices?.[0]?.message?.content || '';
 
@@ -231,21 +483,21 @@ function setupAIAdvisor({
             throw new Error('AI 返回为空');
         }
 
-        content.innerHTML = simpleMarkdown(fullText);
-        const body = getEl('aiPanelBody');
-        if (body) body.scrollTop = body.scrollHeight;
+        revealAIContent(content, typing);
+        renderAIContent(fullText, content);
         return fullText;
     }
 
-    async function requestAI(prompt, content, stream, signal) {
+    async function requestAI(prompt, content, typing, stream, signal, profile) {
         const response = await fetch(AI_API_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'text/event-stream, application/json',
-                'X-Poker-Request': REQUEST_MARKER
+                'X-Poker-Request': REQUEST_MARKER,
+                'X-CSRF-Token': getCsrfToken()
             },
-            body: JSON.stringify(buildAIRequestPayload(prompt, stream)),
+            body: JSON.stringify(buildAIRequestPayload(prompt, stream, profile)),
             signal
         });
 
@@ -257,12 +509,19 @@ function setupAIAdvisor({
             throw error;
         }
 
-        return stream
-            ? consumeStreamingResponse(response, content)
-            : consumeJsonResponse(response, content);
+        const contentType = String(response.headers.get('Content-Type') || '').toLowerCase();
+        const shouldUseJson = !stream || contentType.includes('application/json');
+
+        return shouldUseJson
+            ? consumeJsonResponse(response, content, typing)
+            : consumeStreamingResponse(response, content, typing);
     }
 
-    function buildAIPrompt() {
+    // ===== Prompt 构建 =====
+
+    function buildAIPrompt(options = {}) {
+        const compact = Boolean(options.compact);
+        const mode = options.mode || 'decision';
         const hand = state.hand.filter(c => c !== null).map(c =>
             `${RANK_NAMES[c.rank]}${SUIT_SYMBOLS[SUITS[c.suit]]}`
         );
@@ -283,61 +542,128 @@ function setupAIAdvisor({
                 : calculateDecisionMetrics(0, situation.potSize, situation.callAmount))
             : null;
         const stageText = getStageText(community.length);
+        const handKey = getCurrentHandKey();
+        const boardTexture = getBoardTextureSummary();
         const potSize = Math.max(0, Number(situation.potSize) || 0);
         const stack = Math.max(1, Number(situation.effectiveStackBB) || 100);
+        const spr = potSize > 0 ? (stack / potSize).toFixed(1) : '\u2014';
         const smallBet = (potSize * 0.33).toFixed(1);
         const midBet = (potSize * 0.6).toFixed(1);
         const largeBet = (potSize * 0.9).toFixed(1);
-        const raiseToMin = (potSize + Number(smallBet)).toFixed(1);
-        const raiseToMax = (potSize + Number(largeBet)).toFixed(1);
-        const situationLines = state.situationEnabled
-            ? `- **我的位置**: ${situation.position}
-- **对手画像**: ${opponentProfile.label}（${opponentProfile.description}）
-- **当前底池**: ${formatChips(situation.potSize)}
-- **需跟注金额**: ${formatChips(situation.callAmount)}
-- **你的剩余积分**: ${formatChips(situation.effectiveStackBB)}
-- **底池赔率**: ${decision.potOddsPct}%
-- **最低所需胜率**: ${decision.requiredEquityPct}%
-- **简化 Call EV**: ${decision.callEVBB} 积分
-- **程序建议动作**: ${decision.action}`
-            : `- **牌局信息模式**: 已关闭（默认按 100BB 深码、单挑常规对抗给建议）`;
+        const preflopBaseline = mode === 'preflop-default' ? buildPreflopBaselineSummary() : '';
+        const coreFacts = [
+            `阶段:${stageText}`,
+            `手牌简称:${handKey || '-'}`,
+            `手牌:${hand.join(' ') || '-'}`,
+            `公牌:${community.length > 0 ? community.join(' ') : '-'}`,
+            `对手:${state.numOpponents}`,
+            `胜平负:${winRate}/${tieRate}/${loseRate}`,
+            `当前牌型:${currentHandName || '-'}`
+        ];
+        const fastFacts = state.situationEnabled
+            ? [
+                `位置:${situation.position}`,
+                `底池:${formatShortNumber(situation.potSize)}`,
+                `跟注:${formatShortNumber(situation.callAmount)}`,
+                `后手:${formatShortNumber(situation.effectiveStackBB)}`,
+                `SPR:${spr}`,
+                `画像:${formatProfileToken(situation.opponentProfile, opponentProfile)}`,
+                `跟注赔率:${decision.potOddsPct}%`,
+                `继续门槛:${decision.requiredEquityPct}%`,
+                `CallEV:${decision.callEVBB}`,
+                `程序建议:${decision.action}`
+            ]
+            : ['模式:默认100BB'];
+        const supportFacts = [];
+        if (mode !== 'preflop-default' && potSize > 0) {
+            supportFacts.push(`可选尺寸:${smallBet}/${midBet}/${largeBet}`);
+        }
+        if (boardTexture) supportFacts.push(`牌面:${boardTexture}`);
+        const decisionGuidance = state.situationEnabled
+            ? '原则:多人池更收紧; 未给弃牌率与下注历史时少做纯诈唬; 胜率低于门槛且无隐含赔率时优先弃牌; 胜率明显高于门槛时优先价值/继续'
+            : '原则:多人池更收紧; 未给弃牌率与下注历史时少做纯诈唬; 未开局面信息时按标准 100BB 默认线给稳健建议';
+        const modeSpecificGuidance = mode === 'decision'
+            ? '这是精确决策模式: 可以给 fold/call/raise 结论，但必须围绕继续门槛、跟注赔率与 CallEV。'
+            : (mode === 'preflop-default'
+                ? '这是翻前默认模式: 未提供动作历史时按无人入池处理。不要输出“弃牌100%/跟注100%”这类面对下注的结论。'
+                : '这是翻后默认模式: 未提供跟注金额，不要输出纯弃牌/纯跟注百分比；应给默认打法、尺寸和转牌计划。');
 
-        return `你是一位世界级的德州扑克策略大师和教练。请根据以下牌局信息，给出详细的策略分析和操作建议。
+        if (mode === 'preflop-default') {
+            return [
+                '按固定格式快答。',
+                coreFacts.join(' | '),
+                preflopBaseline ? `本地基线:${preflopBaseline}` : '',
+                '上下文:未知位置、未知前人动作、默认100BB无人入池(open pot)',
+                modeSpecificGuidance,
+                '补充:若对手数=1且翻前胜率明显高于50%，通常不应给纯弃牌。',
+                compact ? '输出:1核心结论 2推荐开局 3位置建议 4开局尺寸 5牌力依据 6手牌特点 7若遇反击 8补充说明' : '输出:1核心结论 2推荐开局 3位置建议 4开局尺寸 5牌力档次 6手牌特点 7多人修正 8若遇3bet 9翻后重点 10补充说明',
+                compact ? '限制:每行1到2短句,总字数<=320字' : '限制:每行1到2短句,总字数<=520字'
+            ].filter(Boolean).join('\n');
+        }
 
-## 当前牌局信息
-- **我的手牌**: ${hand.join(' ')}
-- **公共牌**: ${community.length > 0 ? community.join(' ') : '暂无（翻前）'}
-- **当前阶段**: ${stageText}
-- **对手数量**: ${state.numOpponents}人
-- **模拟胜率**: 胜${winRate} / 平${tieRate} / 负${loseRate}
-${situationLines}
-${currentHandName ? `- **当前最佳牌型**: ${currentHandName}` : ''}
-- **可参考下注尺寸（按当前底池）**:
-  - 小注约 1/3 Pot: ${smallBet} 积分
-  - 中注约 2/3 Pot: ${midBet} 积分
-  - 大注约 90% Pot: ${largeBet} 积分
-  - 进攻加注目标区间: ${raiseToMin} - ${raiseToMax} 积分
-- **有效后手参考**: ${stack.toFixed(1)} 积分
+        if (mode === 'postflop-default') {
+            return [
+                '按固定格式快答。',
+                coreFacts.join(' | '),
+                supportFacts.join(' | '),
+                '上下文:未提供底池赔率/跟注金额/对手下注尺度，仅能给默认打法',
+                modeSpecificGuidance,
+                '补充:若有强听牌、两头顺/同花听或明显成牌，要明确写出主动/被动计划与危险转牌。',
+                compact ? '输出:1牌力定位 2默认打法 3推荐尺寸 4关键依据1 5关键依据2 6危险转牌 7下一街计划 8最大风险' : '输出:1牌力定位 2默认打法 3推荐尺寸 4为什么这样打 5听牌/阻断 6危险转牌 7转牌计划 8河牌计划 9若遭加压 10最大风险',
+                compact ? '限制:每行1到2短句,总字数<=320字' : '限制:每行1到2短句,总字数<=560字'
+            ].filter(Boolean).join('\n');
+        }
 
-## 输出要求（必须量化）
-1. 请明确给出主动作：Fold / Check / Call / Bet / Raise 之一。
-2. 必须给频率建议（百分比），例如“Raise 35%，Call 45%，Fold 20%”。
-3. 必须给具体下注或加注尺寸（积分），并说明为何选小/中/大尺寸。
-4. 必须给诈唬频率建议（总诈唬占比 + 半诈唬占比），并指出最适合诈唬的组合特征（例如阻断牌）。
-5. 必须给下一街计划：被跟注后转牌或河牌怎么继续（哪些牌继续开火、哪些牌减速）。
-6. 必须给 exploit 调整：针对当前对手画像如何偏离 GTO（至少2条）。
-7. 明确指出风险牌面和反制点（至少2条）。
-
-## 输出格式（严格按以下标题）
-### 1) 主线决策
-### 2) 下注/加注尺寸方案
-### 3) 诈唬与半诈唬频率
-### 4) 下一街执行计划
-### 5) 对手画像 Exploit
-### 6) 风险警报
-
-请用简洁中文输出，优先引用胜率、底池赔率、EV 来支撑结论；如果信息不足，请写出你采用的假设。`;
+        return [
+            '根据牌局数据给出快答。',
+            coreFacts.join(' | '),
+            fastFacts.join(' | '),
+            supportFacts.join(' | '),
+            decisionGuidance,
+            modeSpecificGuidance,
+            compact ? '输出:1核心结论 2推荐动作 3推荐尺寸 4赔率与门槛 5牌力解读 6下一街计划 7若遭反击 8最大风险' : '输出:1核心结论 2推荐动作 3推荐尺寸 4赔率与门槛 5CallEV解读 6牌力定位 7牌面纹理/阻断 8下一街计划 9若遭反击 10最大风险',
+            compact ? '限制:每行1到2短句,不写长推导,总字数<=320字' : '限制:每行1到2短句,不写长推导,总字数<=560字'
+        ].filter(Boolean).join('\n');
     }
+
+    function buildAICacheKey(profile) {
+        const lastAnalysis = state.lastAnalysis;
+        const situation = getSituationSnapshot();
+        const hand = state.hand.filter(c => c !== null).map(c =>
+            `${RANK_NAMES[c.rank]}${SUIT_SYMBOLS[SUITS[c.suit]]}`
+        );
+        const community = state.community.filter(c => c !== null).map(c =>
+            `${RANK_NAMES[c.rank]}${SUIT_SYMBOLS[SUITS[c.suit]]}`
+        );
+        const currentHandNameEl = getEl('currentHandName');
+        const currentHandName = currentHandNameEl ? currentHandNameEl.textContent : '';
+
+        return JSON.stringify({
+            v: 8,
+            promptVersion: AI_PROMPT_VERSION,
+            mode: getAIContextMode(),
+            compact: Boolean(profile && profile.compactPrompt),
+            maxTokens: profile && profile.maxTokens,
+            temperature: profile && profile.temperature,
+            hand,
+            community,
+            opponents: state.numOpponents,
+            winRate: lastAnalysis ? lastAnalysis.result.winRate : '',
+            tieRate: lastAnalysis ? lastAnalysis.result.tieRate : '',
+            loseRate: lastAnalysis ? lastAnalysis.result.loseRate : '',
+            situationEnabled: state.situationEnabled,
+            position: situation.position,
+            potSize: situation.potSize,
+            callAmount: situation.callAmount,
+            effectiveStackBB: situation.effectiveStackBB,
+            opponentProfile: situation.opponentProfile,
+            currentHandName,
+            boardTexture: getBoardTextureSummary(),
+            handKey: getCurrentHandKey()
+        });
+    }
+
+    // ===== AI 面板交互 =====
 
     async function askAI() {
         const btn = getEl('aiAdvisorBtn');
@@ -353,41 +679,76 @@ ${currentHandName ? `- **当前最佳牌型**: ${currentHandName}` : ''}
         btn.classList.add('loading');
         overlay.style.display = 'block';
         panel.style.display = 'flex';
-        typing.classList.remove('hidden');
-        content.classList.remove('visible');
-        content.innerHTML = '';
+        showAIWaiting(typing, content);
 
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30秒超时
+        const mode = getAIContextMode();
+        const profile = getAIRequestProfile(mode);
+        const cacheKey = buildAICacheKey(profile);
+        const cachedAdvice = readAIAdviceCache(cacheKey);
+        const staleCacheText = cachedAdvice && cachedAdvice.text ? cachedAdvice.text : '';
+        const shouldRefreshStaleCache = !!(cachedAdvice && !cachedAdvice.isFresh);
 
-        try {
-            const prompt = buildAIPrompt();
 
+
+        if (cachedAdvice && cachedAdvice.text) {
             typing.classList.add('hidden');
             content.classList.add('visible');
-            const preferStreaming = shouldPreferStreaming();
+            renderAIContent(cachedAdvice.text, content);
 
-            try {
-                await requestAI(prompt, content, preferStreaming, controller.signal);
-            } catch (error) {
-                const shouldFallback = preferStreaming && /流式响应|ReadableStream|reader/i.test(String(error && error.message ? error.message : error));
-                if (!shouldFallback) {
-                    throw error;
+            if (!shouldRefreshStaleCache) {
+                btn.classList.remove('loading');
+                vibrate('success');
+                return;
+            }
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), profile.timeoutMs);
+
+        try {
+            const prompt = buildAIPrompt({ compact: profile.compactPrompt, mode });
+            const preferStreaming = profile.preferStreaming && !shouldRefreshStaleCache;
+            let fullText = '';
+
+            fullText = await getSharedRequest(cacheKey, async () => {
+                try {
+                    return await requestAI(prompt, content, typing, preferStreaming, controller.signal, profile);
+                } catch (error) {
+                    const shouldFallback = preferStreaming && /流式响应|ReadableStream|reader/i.test(String(error && error.message ? error.message : error));
+                    if (!shouldFallback) {
+                        throw error;
+                    }
+
+                    content.innerHTML = '';
+                    showAIWaiting(typing, content);
+                    return requestAI(prompt, content, typing, false, controller.signal, profile);
                 }
+            });
 
-                content.innerHTML = '';
-                await requestAI(prompt, content, false, controller.signal);
+            if (fullText) {
+                writeAIAdviceCache(cacheKey, fullText);
+                if (shouldRefreshStaleCache && fullText === staleCacheText) {
+                    renderAIContent(staleCacheText, content);
+                }
             }
             vibrate('success');
 
         } catch (err) {
-            typing.classList.add('hidden');
-            content.classList.add('visible');
-            const errorView = normalizeThrownError(err);
-            const safeMessage = escapeHTML(errorView.message);
-            const safeHint = escapeHTML(errorView.hint);
-            content.innerHTML = `<p style="color:#ef4444;">❌ AI 分析出错：${safeMessage}</p>
-            ${safeHint ? `<p style="color:var(--text-muted);font-size:0.85rem;">${safeHint}</p>` : ''}`;
+            if (staleCacheText) {
+                renderAIContent(staleCacheText, content);
+            } else {
+                revealAIContent(content, typing);
+                const fallbackText = mode === 'preflop-default' ? buildLocalPreflopAdvice() : '';
+                if (fallbackText) {
+                    renderAIContent(fallbackText, content);
+                } else {
+                    const errorView = normalizeThrownError(err);
+                    const safeMessage = escapeHTML(errorView.message);
+                    const safeHint = escapeHTML(errorView.hint);
+                    content.innerHTML = `<p style="color:#ef4444;">❌ AI 分析出错：${safeMessage}</p>
+                ${safeHint ? `<p style="color:var(--text-muted);font-size:0.85rem;">${safeHint}</p>` : ''}`;
+                }
+            }
         } finally {
             clearTimeout(timeoutId);
             btn.classList.remove('loading');

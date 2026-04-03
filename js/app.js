@@ -20,8 +20,10 @@ const app = (() => {
             isPreflopCacheEligible: typeof isPreflopCacheEligible !== 'undefined' ? isPreflopCacheEligible : window.isPreflopCacheEligible,
             normalizeOpponentProfile: typeof normalizeOpponentProfile !== 'undefined' ? normalizeOpponentProfile : window.normalizeOpponentProfile,
             getStartingHandKey: typeof getStartingHandKey !== 'undefined' ? getStartingHandKey : window.getStartingHandKey,
-            DEFAULT_PREFLOP_PRECOMPUTE_TARGETS: window.DEFAULT_PREFLOP_PRECOMPUTE_TARGETS,
+            DEFAULT_PREFLOP_PRECOMPUTE_TARGETS: typeof DEFAULT_PREFLOP_PRECOMPUTE_TARGETS !== 'undefined' ? DEFAULT_PREFLOP_PRECOMPUTE_TARGETS : window.DEFAULT_PREFLOP_PRECOMPUTE_TARGETS,
             buildAnalysisCacheUrl: window.buildAnalysisCacheUrl,
+            createAnalysisCacheEntry: typeof createAnalysisCacheEntry !== 'undefined' ? createAnalysisCacheEntry : window.createAnalysisCacheEntry,
+            isAnalysisCacheEntryValid: typeof isAnalysisCacheEntryValid !== 'undefined' ? isAnalysisCacheEntryValid : window.isAnalysisCacheEntryValid,
             ANALYSIS_CACHE_NAME
         })
         : { recordPreflopUsage() {}, schedulePopularPrecompute() {}, readCachedAnalysisEntry() { return null; }, writeCachedAnalysisEntry() {} };
@@ -72,6 +74,13 @@ const app = (() => {
             return el;
         }
         return DOM[id];
+    }
+
+    function getCsrfToken() {
+        if (typeof window.__getPokerCsrfToken === 'function') {
+            return String(window.__getPokerCsrfToken() || '');
+        }
+        return '';
     }
 
     // ===== 平台检测 =====
@@ -623,8 +632,15 @@ const app = (() => {
     // ===== 分析按钮 =====
     function updateAnalyzeButton() {
         const btn = /** @type {HTMLButtonElement | null} */ (getEl('analyzeBtn'));
-        if (!btn) return;
+        const actionButtons = getEl('actionButtons');
         const handReady = state.hand.every(c => c !== null);
+
+        if (actionButtons) {
+            actionButtons.hidden = !handReady;
+        }
+        document.body.classList.toggle('hand-ready', handReady);
+
+        if (!btn) return;
         btn.disabled = !handReady || state.isCalculating;
     }
 
@@ -741,19 +757,36 @@ const app = (() => {
         renderAdvice(advice);
     }
 
+    // ===== Worker Pool — 复用 Worker 避免重复初始化开销 =====
+    const workerPool = [];
+    const WORKER_POOL_MAX = 8;
+
+    function acquireWorker() {
+        if (workerPool.length > 0) {
+            return workerPool.pop();
+        }
+        return new Worker('js/worker.js');
+    }
+
+    function releaseWorker(worker) {
+        worker.onmessage = null;
+        worker.onerror = null;
+        if (workerPool.length < WORKER_POOL_MAX) {
+            workerPool.push(worker);
+        } else {
+            worker.terminate();
+        }
+    }
+
     function cancelAnalysis() {
         state.analysisRunId += 1;
         state.selectionToken += 1;
         state.isSelectingCard = false;
         state.isCalculating = false;
-        // 优化6: 清理所有 Worker 和事件监听器
+        // 归还所有 Worker 回池中
         if (state.currentWorkers && state.currentWorkers.length > 0) {
             state.currentWorkers.forEach(worker => {
-                if (worker) {
-                    worker.onmessage = null;
-                    worker.onerror = null;
-                    worker.terminate();
-                }
+                if (worker) releaseWorker(worker);
             });
             state.currentWorkers = [];
         }
@@ -929,14 +962,12 @@ const app = (() => {
             };
 
             for (let i = 0; i < plan.workerCount; i++) {
-                const worker = new Worker('js/worker.js');
+                const worker = acquireWorker();
                 workers.push(worker);
 
                 worker.onmessage = function (e) {
                     if (runId !== state.analysisRunId) {
-                        worker.onmessage = null;
-                        worker.onerror = null;
-                        worker.terminate();
+                        releaseWorker(worker);
                         return;
                     }
 
@@ -955,11 +986,7 @@ const app = (() => {
                         refreshProgress();
 
                         if (completedWorkers === plan.workerCount) {
-                            workers.forEach((w) => {
-                                w.onmessage = null;
-                                w.onerror = null;
-                                w.terminate();
-                            });
+                            workers.forEach((w) => releaseWorker(w));
                             finish(mergeResults(results), totalSimulations);
                         }
                     }
@@ -975,6 +1002,7 @@ const app = (() => {
                     if (switchedToFallback) return;
 
                     workers.forEach((w) => {
+                        // 出错的 Worker 直接销毁，不回池
                         w.onmessage = null;
                         w.onerror = null;
                         w.terminate();
@@ -1503,50 +1531,557 @@ const app = (() => {
     }
 
     // 内联 AI 回退（当 ai-advisor.js 模块因缓存问题未加载时）
+    function readInlineAIError(response) {
+        return response.json()
+            .then(function(data) {
+                if (data && typeof data.error === 'string' && data.error.trim()) {
+                    return data.error.trim();
+                }
+                return 'AI 服务暂时不可用';
+            })
+            .catch(function() {
+                return 'AI 服务暂时不可用';
+            });
+    }
+
+    function escapeInlineAIText(text) {
+        return String(text)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatInlineShortNumber(value) {
+        var num = Number(value);
+        if (!isFinite(num)) return '-';
+        return Math.round(num) === num ? String(num) : num.toFixed(1).replace(/\.0$/, '');
+    }
+
+    function normalizePreflopHandKey(handKey) {
+        var raw = String(handKey || '').trim();
+        if (!raw) return '';
+        var base = raw.slice(0, 2).toUpperCase();
+        var suffix = raw.length > 2 ? raw.slice(2).toLowerCase() : '';
+        return base + suffix;
+    }
+
+    function getPreflopChartBaseWinRate(handKey) {
+        var normalized = normalizePreflopHandKey(handKey);
+        if (!normalized) return 0;
+
+        var chart = (typeof PREFLOP_CHART !== 'undefined' ? PREFLOP_CHART : window.PREFLOP_CHART) || {};
+        var baseWinRate = Number(chart[normalized]);
+        if (isFinite(baseWinRate) && baseWinRate > 0) {
+            return baseWinRate;
+        }
+
+        var fallbackRate = state.lastAnalysis && state.lastAnalysis.result
+            ? Number(state.lastAnalysis.result.winRate || 0)
+            : 0;
+        return isFinite(fallbackRate) && fallbackRate > 0 ? fallbackRate : 40;
+    }
+
+    function getPreflopRankOrder(rankChar) {
+        return '23456789TJQKA'.indexOf(String(rankChar || '').toUpperCase());
+    }
+
+    function getPreflopFeatureDetails(handKey) {
+        var normalized = normalizePreflopHandKey(handKey);
+        if (!normalized) {
+            return {
+                label: '未知手牌',
+                reason: '缺少手牌信息，默认先走保守线'
+            };
+        }
+
+        var upperKey = normalized.toUpperCase();
+        var isPair = normalized.length === 2;
+        var isSuited = normalized.endsWith('s');
+        var first = upperKey[0];
+        var second = upperKey[1];
+        var firstOrder = getPreflopRankOrder(first);
+        var secondOrder = getPreflopRankOrder(second);
+        var gap = Math.abs(firstOrder - secondOrder);
+        var broadway = 'AKQJT';
+
+        if (isPair) {
+            if ('AKQJT'.indexOf(first) !== -1) {
+                return {
+                    label: '高口袋对子',
+                    reason: '翻前价值高，未知位置下也有足够底气'
+                };
+            }
+            if ('987'.indexOf(first) !== -1) {
+                return {
+                    label: '中口袋对子',
+                    reason: '有稳定摊牌价值，也保留做暗三条的上限'
+                };
+            }
+            return {
+                label: '小口袋对子',
+                reason: '更依赖位置和隐含赔率，不适合无脑做大池'
+            };
+        }
+
+        if (first === 'A' && isSuited && ['2', '3', '4', '5'].indexOf(second) !== -1) {
+            return {
+                label: '同花轮子A',
+                reason: '既有A高阻断，也保留顺同花延展性，但更吃位置'
+            };
+        }
+
+        if (first === 'A' && isSuited) {
+            return {
+                label: '同花A高',
+                reason: '高张和同花潜力兼备，翻后实现率较好'
+            };
+        }
+
+        if (first === 'A' && !isSuited) {
+            return {
+                label: '非同花A',
+                reason: '有A高阻断，但踢脚弱时翻后常被压制'
+            };
+        }
+
+        if (broadway.indexOf(first) !== -1 && broadway.indexOf(second) !== -1) {
+            return {
+                label: isSuited ? '同花高张' : '高张组合',
+                reason: isSuited
+                    ? '高张覆盖面广，还能兼顾同花潜力'
+                    : '高张不错，但无同花加成时更依赖位置'
+            };
+        }
+
+        if (isSuited && gap === 1) {
+            return {
+                label: '同花连张',
+                reason: '顺同花潜力好，适合有位置时入池'
+            };
+        }
+
+        if (isSuited && gap === 2) {
+            return {
+                label: '同花一隔张',
+                reason: '有一定延展性，但容错不如真正连张'
+            };
+        }
+
+        if (isSuited && first === 'K') {
+            return {
+                label: '同花K高',
+                reason: '有阻断和同花潜力，但仍属于偏位置型手牌'
+            };
+        }
+
+        if (isSuited) {
+            return {
+                label: '同花投机牌',
+                reason: '主要依赖位置与翻后兑现率，不能当强值牌打'
+            };
+        }
+
+        return {
+            label: '普通非同花牌',
+            reason: '缺少高张和同花支撑，翻后容错较低'
+        };
+    }
+
+    function getPreflopTierHint(baseTier) {
+        if (baseTier <= 2) return '属于明显强档，不是单纯靠偷盲吃饭';
+        if (baseTier === 3) return '是中上开局牌，但不是全位置自动打开';
+        if (baseTier === 4) return '更像位置牌，不能只看单挑胜率';
+        if (baseTier === 5) return '偏边缘，主要靠后位和弃牌率挣钱';
+        return '单挑胜率不等于真实开局价值';
+    }
+
+    function buildDefaultPreflopAdviceText() {
+        var handKey = '';
+        if (state.hand[0] && state.hand[1] && typeof getStartingHandKey === 'function') {
+            try {
+                handKey = normalizePreflopHandKey(getStartingHandKey(state.hand[0], state.hand[1]) || '');
+            } catch (error) {
+                handKey = '';
+            }
+        }
+
+        if (!handKey) return '';
+
+        var opponents = Math.max(1, Number(state.numOpponents) || 1);
+        var baseWinRate = getPreflopChartBaseWinRate(handKey);
+        var simulatedWinRate = state.lastAnalysis && state.lastAnalysis.result
+            ? Number(state.lastAnalysis.result.winRate || 0)
+            : baseWinRate;
+        var baseTier = getTier(baseWinRate);
+        var tableTightening = opponents >= 6 ? 2 : (opponents >= 3 ? 1 : 0);
+        var effectiveTier = Math.min(7, baseTier + tableTightening);
+        var feature = getPreflopFeatureDetails(handKey);
+
+        var summaryLine = '';
+        var positionLine = '';
+        var multiwayLine = '';
+        var reactionLine = '';
+
+        if (effectiveTier <= 2) {
+            summaryLine = opponents === 1
+                ? '核心结论: 这手牌在单挑无人入池里属于明确价值开局'
+                : '核心结论: 这手牌整体偏强，多数位置都能考虑首入池';
+            positionLine = opponents >= 6
+                ? '位置建议: 满桌前位正常开，中后位可以更主动拿先手'
+                : '位置建议: 未知位置下多数位置可开，前位别夸张加频';
+            multiwayLine = opponents === 1
+                ? '多人修正: 如果从单挑变成多家底池，仍有价值，但别无脑把池子做太大'
+                : '多人修正: 对手越多越要尊重实现率，翻后更依赖位置兑现优势';
+            reactionLine = '若遇反击: 小中码 3bet 通常可继续，超大尺度或无位置再收紧';
+        } else if (effectiveTier === 3) {
+            summaryLine = '核心结论: 这手牌能开，但更像中后位优先的稳健开局';
+            positionLine = '位置建议: HJ/CO/BTN 更舒服，UTG/MP 默认别放太宽';
+            multiwayLine = '多人修正: 人数一多就不再是自动价值开局，要更看位置和桌况';
+            reactionLine = '若遇反击: 默认别轻易 4bet，位置差或大尺度 3bet 多弃';
+        } else if (effectiveTier === 4) {
+            summaryLine = '核心结论: 这手牌更像位置型 open，不适合未知位置硬开';
+            positionLine = '位置建议: 以 CO/BTN 为主，SB 选择性入池，前位多数收紧';
+            multiwayLine = '多人修正: 桌上人越多，这类牌越容易在翻后被压制或难兑现';
+            reactionLine = '若遇反击: 对 3bet 偏保守，未知对手大多数直接弃牌';
+        } else if (effectiveTier === 5) {
+            summaryLine = '核心结论: 这手牌已经偏边缘，主要靠后位偷盲赚取主动权';
+            positionLine = '位置建议: BTN 最好，CO 偶尔可以，其他位置默认不主动打开';
+            multiwayLine = '多人修正: 一旦不是清爽单挑环境，这类牌的真实盈利会继续下降';
+            reactionLine = '若遇反击: 被 3bet 大多直接放弃，不拿边缘牌硬扛';
+        } else {
+            summaryLine = '核心结论: 这手牌在未知位置和未知动作下默认偏弃牌';
+            positionLine = '位置建议: 除非你明确在按钮位偷盲且盲位很弱，否则不建议打开';
+            multiwayLine = '多人修正: 这类牌最怕多人池和被跟多家，翻后容错会很差';
+            reactionLine = '若遇反击: 这类牌在无信息时应直接收手，不建议继续纠缠';
+        }
+
+        var sizeLine = opponents <= 2
+            ? '开局尺寸: 未知位置先按2.2-2.5BB'
+            : (opponents <= 5 ? '开局尺寸: 未知位置先按2.3-2.6BB' : '开局尺寸: 满桌更接近2.5BB');
+        var rateLine = '牌力依据: ' + handKey + ' 单挑基准约' + formatInlineShortNumber(baseWinRate) + '%，' + getPreflopTierHint(baseTier);
+        if (opponents > 1 && isFinite(simulatedWinRate) && simulatedWinRate > 0 && Math.abs(simulatedWinRate - baseWinRate) >= 1) {
+            rateLine += '；当前' + opponents + '人局约' + formatInlineShortNumber(simulatedWinRate) + '%';
+        }
+        var featureLine = '手牌特点: ' + feature.label + '，' + feature.reason;
+        var noteLine = '补充说明: 现在是默认 100BB 无人入池建议；若前面已经有人 limp/raise，请开启牌局信息看精确回答';
+
+        return [
+            summaryLine,
+            positionLine,
+            sizeLine,
+            rateLine,
+            featureLine,
+            multiwayLine,
+            reactionLine,
+            noteLine
+        ].join('\n');
+    }
+
+    function readInlineAIAdviceCache(cacheKey) {
+        try {
+            var raw = localStorage.getItem('poker.inlineAiAdviceCache.v7');
+            if (!raw) return '';
+            var store = JSON.parse(raw);
+            var entry = store[cacheKey];
+            if (!entry) return '';
+            if (!entry.ts || Date.now() - entry.ts > 6 * 60 * 60 * 1000) return '';
+            return typeof entry.text === 'string' ? entry.text : '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function writeInlineAIAdviceCache(cacheKey, text) {
+        try {
+            var raw = localStorage.getItem('poker.inlineAiAdviceCache.v7');
+            var store = raw ? JSON.parse(raw) : {};
+            store[cacheKey] = { text: String(text || ''), ts: Date.now() };
+            var entries = Object.entries(store).sort(function(a, b) {
+                return (b[1] && b[1].ts ? b[1].ts : 0) - (a[1] && a[1].ts ? a[1].ts : 0);
+            }).slice(0, 40);
+            var nextStore = {};
+            entries.forEach(function(entry) {
+                nextStore[entry[0]] = entry[1];
+            });
+            localStorage.setItem('poker.inlineAiAdviceCache.v7', JSON.stringify(nextStore));
+        } catch (error) {
+            // ignore cache persistence failures
+        }
+    }
+
+    function renderInlineAIText(text) {
+        var html = escapeInlineAIText(text)
+            .replace(/^([^\n：:]{2,14}[：:])/gm, '<strong>$1</strong>')
+            .replace(/\n/g, '<br>');
+        return '<p>' + html + '</p>';
+    }
+
+    function revealInlineAIText(text, content, typing) {
+        var finalText = String(text || '');
+
+        if (typing) typing.classList.add('hidden');
+        if (!content) return Promise.resolve(finalText);
+        content.classList.add('visible');
+
+        if (!finalText.trim()) {
+            content.innerHTML = '';
+            return Promise.resolve(finalText);
+        }
+
+        if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            content.innerHTML = renderInlineAIText(finalText);
+            return Promise.resolve(finalText);
+        }
+
+        var segments = [];
+        var buffer = '';
+        for (var i = 0; i < finalText.length; i += 1) {
+            var ch = finalText[i];
+            buffer += ch;
+            if (ch === '\n' || '。！？；：,.!?'.indexOf(ch) !== -1 || buffer.length >= 18) {
+                segments.push(buffer);
+                buffer = '';
+            }
+        }
+        if (buffer) segments.push(buffer);
+
+        if (segments.length <= 1) {
+            content.innerHTML = renderInlineAIText(finalText);
+            return Promise.resolve(finalText);
+        }
+
+        var totalChars = finalText.length;
+        var burst = totalChars > 260 ? 3 : (totalChars > 160 ? 2 : 1);
+        var delay = totalChars > 260 ? 28 : (totalChars > 160 ? 40 : 55);
+
+        return new Promise(function(resolve) {
+            var index = 0;
+            var rendered = '';
+
+            function step() {
+                var count = 0;
+                while (index < segments.length && count < burst) {
+                    rendered += segments[index];
+                    index += 1;
+                    count += 1;
+                }
+
+                content.innerHTML = renderInlineAIText(rendered);
+                var body = getEl('aiPanelBody');
+                if (body) body.scrollTop = body.scrollHeight;
+
+                if (index < segments.length) {
+                    window.setTimeout(step, delay);
+                    return;
+                }
+
+                resolve(finalText);
+            }
+
+            step();
+        });
+    }
+
     function inlineFallbackAskAI() {
         var overlay = getEl('aiPanelOverlay');
         var panel = getEl('aiPanel');
         var typing = getEl('aiTyping');
         var content = getEl('aiContent');
+        var button = getEl('aiAdvisorBtn');
         if (!panel) return;
         if (overlay) overlay.style.display = 'block';
         panel.style.display = 'flex';
         if (typing) typing.classList.remove('hidden');
         if (content) { content.classList.remove('visible'); content.innerHTML = ''; }
+        if (button) button.classList.add('loading');
 
         var handDesc = state.hand.filter(Boolean).map(function(c) {
             var rn = (typeof RANK_NAMES !== 'undefined' ? RANK_NAMES : window.RANK_NAMES) || [];
             var ss = (typeof SUIT_SYMBOLS !== 'undefined' ? SUIT_SYMBOLS : window.SUIT_SYMBOLS) || {};
             return (rn[c.rank] || c.rank) + (ss[c.suit] || '');
         }).join(' ') || '未选择';
-        var prompt = '我在德州扑克中拿到手牌 ' + handDesc + '，请简要分析这手牌的强度和建议打法。';
+        var boardDesc = state.community.filter(Boolean).map(function(c) {
+            var rn = (typeof RANK_NAMES !== 'undefined' ? RANK_NAMES : window.RANK_NAMES) || [];
+            var ss = (typeof SUIT_SYMBOLS !== 'undefined' ? SUIT_SYMBOLS : window.SUIT_SYMBOLS) || {};
+            return (rn[c.rank] || c.rank) + (ss[c.suit] || '');
+        }).join(' ') || '暂无公共牌';
+        var winRateDesc = state.lastAnalysis && state.lastAnalysis.result
+            ? ('胜' + state.lastAnalysis.result.winRate + '% / 平' + state.lastAnalysis.result.tieRate + '% / 负' + state.lastAnalysis.result.loseRate + '%')
+            : '暂无模拟结果';
+        var decision = state.situationEnabled
+            ? (state.lastAnalysis && state.lastAnalysis.decision
+                ? state.lastAnalysis.decision
+                : calculateDecisionMetrics(0, state.situation.potSize, state.situation.callAmount))
+            : null;
+        var boardTextureLabelEl = getEl('textureLabel');
+        var boardTextureScoreEl = getEl('textureScore');
+        var boardTexture = state.community.filter(Boolean).length >= 3
+            ? (((boardTextureLabelEl && boardTextureLabelEl.textContent) || '').trim() + ' ' + (((boardTextureScoreEl && boardTextureScoreEl.textContent) || '').trim())).trim()
+            : '';
+        var currentHandNameEl = getEl('currentHandName');
+        var currentHandName = currentHandNameEl && currentHandNameEl.textContent ? currentHandNameEl.textContent.trim() : '未成牌';
+        var handKey = '';
+        if (state.hand[0] && state.hand[1] && typeof getStartingHandKey === 'function') {
+            try {
+                handKey = getStartingHandKey(state.hand[0], state.hand[1]) || '';
+            } catch (error) {
+                handKey = '';
+            }
+        }
+        var potSize = Math.max(0, Number(state.situation.potSize) || 0);
+        var stack = Math.max(1, Number(state.situation.effectiveStackBB) || 100);
+        var spr = potSize > 0 ? (stack / potSize).toFixed(1) : '-';
+        var smallBet = formatInlineShortNumber(potSize * 0.33);
+        var midBet = formatInlineShortNumber(potSize * 0.6);
+        var largeBet = formatInlineShortNumber(potSize * 0.9);
+        var boardCount = state.community.filter(Boolean).length;
+        var promptVersion = '20260404-detail-1';
+        var mode = state.situationEnabled
+            ? 'decision'
+            : (boardCount === 0 ? 'preflop-default' : 'postflop-default');
+        var situationSummary = state.situationEnabled
+            ? ('位置:' + state.situation.position + ' | 底池:' + formatInlineShortNumber(state.situation.potSize) + ' | 跟注:' + formatInlineShortNumber(state.situation.callAmount) + ' | 后手:' + formatInlineShortNumber(state.situation.effectiveStackBB) + ' | SPR:' + spr + ' | 画像:' + state.situation.opponentProfile)
+            : '模式:默认100BB';
+        var coreFacts = '阶段:' + getStageText(boardCount) + ' | 手牌简称:' + (handKey || '-') + ' | 手牌:' + handDesc + ' | 公牌:' + boardDesc + ' | 对手:' + state.numOpponents + ' | 当前牌型:' + currentHandName;
+        var ratesLine = '胜平负:' + winRateDesc.replace(/胜|平|负/g, '').replace(/ \/ /g, '/');
+        var supportFacts = [];
+        var preflopBaseline = mode === 'preflop-default' ? buildDefaultPreflopAdviceText() : '';
+        if (mode !== 'preflop-default' && potSize > 0) {
+            supportFacts.push('可选尺寸:' + smallBet + '/' + midBet + '/' + largeBet);
+        }
+        if (boardTexture) supportFacts.push('牌面:' + boardTexture);
+        var supportLine = supportFacts.join(' | ');
+        var prompt;
+
+
+        if (mode === 'preflop-default') {
+            prompt = [
+                '按固定格式快答。',
+                coreFacts,
+                ratesLine,
+                preflopBaseline ? ('本地基线:' + preflopBaseline.replace(/\n/g, ' | ')) : '',
+                '上下文:未知位置、未知前人动作、默认100BB无人入池(open pot)',
+                '规则:不要输出面对下注后的弃牌/跟注结论；若对手数=1且翻前胜率明显高于50%，通常不应给纯弃牌。',
+                '输出:1核心结论 2推荐开局 3位置建议 4开局尺寸 5牌力档次 6手牌特点 7多人修正 8若遇3bet 9翻后重点 10补充说明',
+                '限制:每行1到2短句,总字数<=520字'
+            ].filter(Boolean).join('\n');
+        } else if (mode === 'postflop-default') {
+            prompt = [
+                '按固定格式快答。',
+                coreFacts,
+                ratesLine,
+                supportLine,
+                '上下文:未提供底池赔率/跟注金额/对手下注尺度，仅能给默认打法',
+                '规则:不要输出纯弃牌/纯跟注百分比；应给默认打法、尺寸和转牌计划。',
+                '输出:1牌力定位 2默认打法 3推荐尺寸 4为什么这样打 5听牌/阻断 6危险转牌 7转牌计划 8河牌计划 9若遭加压 10最大风险',
+                '限制:每行1到2短句,总字数<=560字'
+            ].filter(Boolean).join('\n');
+        } else {
+            prompt = [
+                '按固定格式快答。',
+                coreFacts,
+                ratesLine,
+                situationSummary,
+                (decision
+                    ? ('跟注赔率:' + decision.potOddsPct + '% | 继续门槛:' + decision.requiredEquityPct + '% | CallEV:' + decision.callEVBB + ' | 程序建议:' + decision.action)
+                    : '模式:默认100BB'),
+                supportLine,
+                '规则:围绕继续门槛、跟注赔率与CallEV作答，不要把继续门槛说成加注门槛。',
+                '输出:1核心结论 2推荐动作 3推荐尺寸 4赔率与门槛 5CallEV解读 6牌力定位 7牌面纹理/阻断 8下一街计划 9若遭反击 10最大风险',
+                '限制:每行1到2短句,总字数<=560字'
+            ].filter(Boolean).join('\n');
+        }
+        var cacheKey = JSON.stringify({
+            v: 8,
+            promptVersion: promptVersion,
+            mode: mode,
+            hand: handDesc,
+            board: boardDesc,
+            opponents: state.numOpponents,
+            rates: winRateDesc,
+            situation: situationSummary,
+            decision: decision ? (decision.action + '|' + decision.potOddsPct + '|' + decision.requiredEquityPct + '|' + decision.callEVBB) : '',
+            handName: currentHandName,
+            boardTexture: boardTexture,
+            handKey: handKey
+        });
+        var cachedAdvice = readInlineAIAdviceCache(cacheKey);
+        if (cachedAdvice) {
+            if (button) button.classList.add('loading');
+            return revealInlineAIText(cachedAdvice, content, typing)
+                .finally(function() {
+                    if (button) button.classList.remove('loading');
+                });
+        }
+        var controller = typeof AbortController === 'function' ? new AbortController() : null;
+        var timeoutId = setTimeout(function() {
+            if (controller) controller.abort();
+        }, 18000);
 
         fetch('/api/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-Poker-Request': 'ai-advisor-inline',
+                'X-CSRF-Token': getCsrfToken()
+            },
             body: JSON.stringify({
                 model: 'deepseek-chat',
-                messages: [{ role: 'user', content: prompt }],
+                messages: [
+                    {
+                        role: 'system',
+                        content: mode === 'decision'
+                            ? '你是严谨的德州扑克顾问。只能依据给定数据回答，不虚构历史动作、弃牌率或读牌。当前模式已给出底池、跟注金额和程序建议，你必须优先围绕继续门槛、跟注赔率、CallEV、SPR、牌力/听牌、牌面纹理给结论，不能把继续门槛说成加注门槛。严格输出10行：核心结论、推荐动作、推荐尺寸、赔率与门槛、CallEV解读、牌力定位、牌面纹理/阻断、下一街计划、若遭反击、最大风险。每行1到2短句，总字数不超过560字。'
+                            : (mode === 'preflop-default'
+                                ? '你是严谨的德州扑克翻前顾问。只能依据给定数据回答，不虚构前人动作。若未提供动作历史，默认按100BB无人入池(open pot)处理，给标准开局建议，不要把建议写成面对下注后的弃牌/跟注结论。严格输出10行：核心结论、推荐开局、位置建议、开局尺寸、牌力档次、手牌特点、多人修正、若遇3bet、翻后重点、补充说明。每行1到2短句，总字数不超过520字。'
+                                : '你是严谨的德州扑克翻后顾问。只能依据给定数据回答，不虚构对手下注或历史动作。若未提供跟注金额，只能给默认打法与优先尺寸/控池计划，不要输出纯弃牌/纯跟注百分比。严格输出10行：牌力定位、默认打法、推荐尺寸、为什么这样打、听牌/阻断、危险转牌、转牌计划、河牌计划、若遭加压、最大风险。每行1到2短句，总字数不超过560字。')
+                    },
+                    { role: 'user', content: prompt }
+                ],
                 stream: false,
-                max_tokens: 800,
-                temperature: 0.7
-            })
+                max_tokens: mode === 'decision' ? 760 : 680,
+                temperature: mode === 'decision' ? 0.16 : 0.13
+            }),
+            signal: controller ? controller.signal : undefined
         })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (typing) typing.classList.add('hidden');
-            if (content) {
-                content.classList.add('visible');
-                var text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '无响应';
-                content.innerHTML = '<p>' + text.replace(/\n/g, '<br>') + '</p>';
+        .then(function(r) {
+            if (!r.ok) {
+                return readInlineAIError(r).then(function(message) {
+                    throw new Error(message);
+                });
             }
+            return r.json();
+        })
+        .then(function(data) {
+            if (content) {
+                var text = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '无响应';
+                writeInlineAIAdviceCache(cacheKey, text);
+                return revealInlineAIText(text, content, typing);
+            }
+            if (typing) typing.classList.add('hidden');
+            return null;
         })
         .catch(function(err) {
             if (typing) typing.classList.add('hidden');
             if (content) {
                 content.classList.add('visible');
-                content.innerHTML = '<p style="color:#ef4444;">❌ AI 请求失败：' + (err.message || err) + '</p>';
+                var fallbackText = mode === 'preflop-default' ? buildDefaultPreflopAdviceText() : '';
+                if (fallbackText) {
+                    content.innerHTML = renderInlineAIText(fallbackText);
+                    return;
+                }
+                var message = err && err.name === 'AbortError'
+                    ? '请求超时，请稍后重试'
+                    : (err && err.message ? err.message : err);
+                content.innerHTML = '<p style="color:#ef4444;">❌ AI 请求失败：' + message + '</p>';
             }
+        })
+        .finally(function() {
+            clearTimeout(timeoutId);
+            if (button) button.classList.remove('loading');
         });
     }
     function inlineFallbackCloseAI() {
@@ -1556,10 +2091,14 @@ const app = (() => {
         if (panel) panel.style.display = 'none';
     }
 
-    const aiAdvisor = typeof setupAIAdvisor === 'function' 
+    const embeddedBrowserPattern = /MicroMessenger|QQ\/|QQBrowser|MetaSr|WebView/i;
+    const shouldUseInlineAIAdvisor = embeddedBrowserPattern.test(navigator.userAgent || '') || typeof setupAIAdvisor !== 'function';
+
+    const aiAdvisor = !shouldUseInlineAIAdvisor
         ? setupAIAdvisor({
             state, getEl, vibrate, getStageText, formatChips, 
             calculateDecisionMetrics, getSituationSnapshot, getOpponentProfile, 
+            buildDefaultPreflopAdviceText,
             RANK_NAMES: window.RANK_NAMES || RANK_NAMES, 
             SUIT_SYMBOLS: window.SUIT_SYMBOLS || SUIT_SYMBOLS, 
             SUITS: window.SUITS || SUITS
@@ -1599,11 +2138,14 @@ const app = (() => {
         installApp,
         handleInstallPrimaryAction,
         dismissInstallGuide,
+        __getInternalState: function() { return state; },
+        __renderSelectedCards: renderSelectedCards,
+        __analyze: analyze,
     };
 })();
 
 // 确保 app 可被 HTML onclick 访问（esbuild IIFE 打包后局部变量会被重命名）
-window.app = app;
+window.app = Object.assign(window.app || {}, app);
 
 // 页面加载后自动初始化
 document.addEventListener('DOMContentLoaded', () => {

@@ -8,8 +8,9 @@
 const SIMULATION_QUICK = 5000;
 const SIMULATION_PRECISE = 20000;
 const SIMULATION_DEFAULT = 10000;
-const ANALYSIS_CACHE_VERSION = '20260317';
+const ANALYSIS_CACHE_VERSION = '20260402';
 const ANALYSIS_CACHE_BASE = '/__analysis_cache__';
+const ANALYSIS_CACHE_ENTRY_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 const PREFLOP_PRECOMPUTE_SIMULATIONS = 18000;
 const DEFAULT_PREFLOP_PRECOMPUTE_TARGETS = [
     { handKey: 'AA', numOpponents: 1, opponentProfile: 'random' },
@@ -47,6 +48,36 @@ function buildAnalysisCacheUrl(myHand, communityCards, numOpponents, opponentPro
     });
 
     return `${ANALYSIS_CACHE_BASE}/${ANALYSIS_CACHE_VERSION}/${handKey}.json?${params.toString()}`;
+}
+
+function createAnalysisCacheEntry(entry) {
+    const cachedAtMs = Number.isFinite(Date.parse(entry && entry.cachedAt ? entry.cachedAt : ''))
+        ? Date.parse(entry.cachedAt)
+        : Date.now();
+
+    return {
+        ...entry,
+        cacheVersion: ANALYSIS_CACHE_VERSION,
+        cachedAt: new Date(cachedAtMs).toISOString(),
+        expiresAt: new Date(cachedAtMs + ANALYSIS_CACHE_ENTRY_TTL_MS).toISOString()
+    };
+}
+
+function isAnalysisCacheEntryValid(entry) {
+    if (!entry || !entry.result) return false;
+    if (entry.cacheVersion !== ANALYSIS_CACHE_VERSION) return false;
+
+    const expiresAtMs = Date.parse(entry.expiresAt || '');
+    if (Number.isFinite(expiresAtMs)) {
+        return expiresAtMs > Date.now();
+    }
+
+    const cachedAtMs = Date.parse(entry.cachedAt || '');
+    if (!Number.isFinite(cachedAtMs)) {
+        return false;
+    }
+
+    return (Date.now() - cachedAtMs) <= ANALYSIS_CACHE_ENTRY_TTL_MS;
 }
 
 function parseStartingHandKey(handKey) {
@@ -87,9 +118,13 @@ function createRepresentativeHandForKey(handKey) {
     ];
 }
 
+let _cachedDeviceProfile = null;
+
 function detectDeviceProfile() {
+    if (_cachedDeviceProfile) return _cachedDeviceProfile;
+
     if (typeof navigator === 'undefined') {
-        return {
+        _cachedDeviceProfile = {
             isMobile: false,
             cores: 4,
             memory: 4,
@@ -97,6 +132,7 @@ function detectDeviceProfile() {
             multiplier: 1,
             tier: 'mid'
         };
+        return _cachedDeviceProfile;
     }
 
     const cores = Math.max(1, Number(navigator.hardwareConcurrency) || 4);
@@ -133,7 +169,7 @@ function detectDeviceProfile() {
         multiplier *= 1.12;
     }
 
-    return {
+    _cachedDeviceProfile = {
         isMobile,
         cores,
         memory,
@@ -141,6 +177,7 @@ function detectDeviceProfile() {
         tier,
         multiplier: clamp(multiplier, 0.5, 1.5)
     };
+    return _cachedDeviceProfile;
 }
 
 function getBaseSimulationCount(communityCardsCount, numOpponents) {
@@ -246,6 +283,38 @@ function removeHandAtIndices(availableCards, firstIndex, secondIndex) {
     return hand;
 }
 
+const OPPONENT_RANGE_COMBO_CACHE = new Map();
+
+function getOpponentRangeCombos(opponentProfile = 'random') {
+    const normalizedProfile = normalizeOpponentProfile(opponentProfile);
+    if (normalizedProfile === 'random') {
+        return null;
+    }
+
+    if (OPPONENT_RANGE_COMBO_CACHE.has(normalizedProfile)) {
+        return OPPONENT_RANGE_COMBO_CACHE.get(normalizedProfile);
+    }
+
+    const rangeSet = getOpponentRangeSet(normalizedProfile);
+    if (!rangeSet) {
+        OPPONENT_RANGE_COMBO_CACHE.set(normalizedProfile, null);
+        return null;
+    }
+
+    const deck = createDeck();
+    const combos = [];
+
+    for (let i = 0; i < deck.length - 1; i++) {
+        for (let j = i + 1; j < deck.length; j++) {
+            if (!rangeSet.has(getStartingHandKey(deck[i], deck[j]))) continue;
+            combos.push([cardToInt(deck[i]), cardToInt(deck[j])]);
+        }
+    }
+
+    OPPONENT_RANGE_COMBO_CACHE.set(normalizedProfile, combos);
+    return combos;
+}
+
 function drawOpponentHandFromRange(availableCards, opponentProfile = 'random') {
     const rangeSet = getOpponentRangeSet(opponentProfile);
 
@@ -253,26 +322,28 @@ function drawOpponentHandFromRange(availableCards, opponentProfile = 'random') {
         return takeRandomHandFromAvailable(availableCards);
     }
 
-    const maxAttempts = Math.min(40, availableCards.length * 2);
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        const firstIndex = Math.floor(Math.random() * availableCards.length);
-        let secondIndex = Math.floor(Math.random() * (availableCards.length - 1));
-
-        if (secondIndex >= firstIndex) secondIndex++;
-
-        const key = getStartingHandKey(availableCards[firstIndex], availableCards[secondIndex]);
-        if (rangeSet.has(key)) {
-            return removeHandAtIndices(availableCards, firstIndex, secondIndex);
+    const rangeCombos = getOpponentRangeCombos(opponentProfile);
+    if (rangeCombos && rangeCombos.length > 0) {
+        const availableIndexByCardInt = new Map();
+        for (let index = 0; index < availableCards.length; index++) {
+            availableIndexByCardInt.set(cardToInt(availableCards[index]), index);
         }
-    }
 
-    for (let i = 0; i < availableCards.length - 1; i++) {
-        for (let j = i + 1; j < availableCards.length; j++) {
-            const key = getStartingHandKey(availableCards[i], availableCards[j]);
-            if (rangeSet.has(key)) {
-                return removeHandAtIndices(availableCards, i, j);
+        const matchedPairs = [];
+        for (let comboIndex = 0; comboIndex < rangeCombos.length; comboIndex++) {
+            const [firstCard, secondCard] = rangeCombos[comboIndex];
+            if (!availableIndexByCardInt.has(firstCard) || !availableIndexByCardInt.has(secondCard)) {
+                continue;
             }
+            matchedPairs.push([
+                availableIndexByCardInt.get(firstCard),
+                availableIndexByCardInt.get(secondCard)
+            ]);
+        }
+
+        if (matchedPairs.length > 0) {
+            const pair = matchedPairs[Math.floor(Math.random() * matchedPairs.length)];
+            return removeHandAtIndices(availableCards, pair[0], pair[1]);
         }
     }
 
@@ -425,7 +496,7 @@ function simulate(myHand, communityCards, numOpponents, numSimulations = SIMULAT
                     if (idx1 >= idx0) idx1++;
 
                     const c0 = deck[idx0], c1 = deck[idx1];
-                    const key = getStartingHandKey(intToCard(c0), intToCard(c1));
+                    const key = getStartingHandKeyFromInt(c0, c1);
                     if (rangeSet.has(key)) {
                         deck[idx0] = deck[drawIndex]; deck[drawIndex] = c0; oppCard0 = c0; drawIndex++;
                         if (idx1 === drawIndex - 1) {
@@ -442,7 +513,7 @@ function simulate(myHand, communityCards, numOpponents, numSimulations = SIMULAT
                     let fallbackFound = false;
                     for (let i = drawIndex; i < deckSize - 1 && !fallbackFound; i++) {
                         for (let j = i + 1; j < deckSize; j++) {
-                            const key = getStartingHandKey(intToCard(deck[i]), intToCard(deck[j]));
+                            const key = getStartingHandKeyFromInt(deck[i], deck[j]);
                             if (rangeSet.has(key)) {
                                 const c0 = deck[i]; deck[i] = deck[drawIndex]; deck[drawIndex] = c0; oppCard0 = c0; drawIndex++;
                                 const c1 = deck[j]; deck[j] = deck[drawIndex]; deck[drawIndex] = c1; oppCard1 = c1; drawIndex++;
@@ -556,6 +627,7 @@ function getAdvice(winRate, decisionMetrics = null) {
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         ANALYSIS_CACHE_VERSION,
+        ANALYSIS_CACHE_ENTRY_TTL_MS,
         PREFLOP_PRECOMPUTE_SIMULATIONS,
         DEFAULT_PREFLOP_PRECOMPUTE_TARGETS,
         clamp,
@@ -564,6 +636,8 @@ if (typeof module !== 'undefined' && module.exports) {
         getSmartSimulationCount,
         getNextRuntimeAdaptiveState,
         buildAnalysisCacheUrl,
+        createAnalysisCacheEntry,
+        isAnalysisCacheEntryValid,
         isPreflopCacheEligible,
         parseStartingHandKey,
         createRepresentativeHandForKey,

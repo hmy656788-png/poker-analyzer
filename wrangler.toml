@@ -6,3 +6,6 @@ pages_build_output_dir = "."
 binding = "ACCESS_DB"
 database_name = "poker-access"
 database_id = "67858159-6c10-4abf-9750-ef8be65650c3"
+
+[ai]
+binding = "AI"

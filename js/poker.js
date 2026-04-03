@@ -694,7 +694,7 @@ function generatePreflopChart() {
         'J2o': 43, '64o': 43, '53o': 42, '43o': 42, '32s': 40,
         '32o': 38, '42o': 40, '52o': 41, '62o': 40, '72o': 38,
         '82o': 38, '92o': 39, '73o': 41, '83o': 39, '93o': 40,
-        '84o': 41, '94o': 43, '74o': 42, '85o': 44, '95o': 43,
+        '84o': 41, '74o': 42, '85o': 44, '95o': 43,
     };
 
     const allTiers = [tier1, tier2, tier3, tier4, tier5, tier6, tier7];
@@ -955,6 +955,27 @@ function analyzeBoardTexture(communityCards) {
     };
 }
 
+/**
+ * 高性能版 getStartingHandKey — 直接从整数牌编码计算
+ * 避免在模拟热路径中创建临时 {rank, suit} 对象
+ * @param {number} intCard1 - 整数牌编码 (0-51)
+ * @param {number} intCard2 - 整数牌编码 (0-51)
+ * @returns {string} 如 "AKs" 或 "AKo" 或 "AA"
+ */
+function getStartingHandKeyFromInt(intCard1, intCard2) {
+    let r1 = intCard1 >> 2;
+    let r2 = intCard2 >> 2;
+    const suited = (intCard1 & 3) === (intCard2 & 3);
+
+    if (r1 < r2) { const tmp = r1; r1 = r2; r2 = tmp; }
+
+    const n1 = RANK_KEY_NAMES[r1];
+    const n2 = RANK_KEY_NAMES[r2];
+
+    if (r1 === r2) return n1 + n2;
+    return n1 + n2 + (suited ? 's' : 'o');
+}
+
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         SUITS, SUIT_SYMBOLS, SUIT_COLORS, RANK_NAMES,
@@ -964,7 +985,7 @@ if (typeof module !== 'undefined' && module.exports) {
         analyzeBoardTexture,
         PREFLOP_CHART, OPPONENT_PROFILES,
         getOpponentProfile, getOpponentRangeSet, normalizeOpponentProfile,
-        getStartingHandKey, generateStartingHandGrid,
+        getStartingHandKey, getStartingHandKeyFromInt, generateStartingHandGrid,
         // 高性能 API
         cardToInt, intToCard, createIntDeck, removeIntCards,
         getBestHandFast, fastHandRank
