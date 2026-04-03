@@ -185,8 +185,7 @@
         return ranks[cardObj.rank] + suits[cardObj.suit];
     }
 
-    // Export to global app object
-    if (!global.app) global.app = {};
-    Object.assign(global.app, api);
+    // Export to standalone global namespace (app.js will bridge these into window.app)
+    global.__scannerAPI = api;
 
 })(window);

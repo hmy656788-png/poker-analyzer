@@ -2159,6 +2159,11 @@ const app = (() => {
 // 确保 app 可被 HTML onclick 访问（esbuild IIFE 打包后局部变量会被重命名）
 window.app = Object.assign(window.app || {}, app);
 
+// 桥接 scanner API（scanner.js 先于 app.js 加载，方法暂存在 window.__scannerAPI）
+if (window.__scannerAPI) {
+    Object.assign(window.app, window.__scannerAPI);
+}
+
 // 页面加载后自动初始化
 document.addEventListener('DOMContentLoaded', () => {
     app.init();
