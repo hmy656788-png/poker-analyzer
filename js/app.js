@@ -1258,8 +1258,9 @@ const app = (() => {
 
         entries.forEach(([rank, data]) => {
             const pct = parseFloat(data.percentage);
-            const scaledWidth = maxPct > 0 ? (pct / maxPct * 100) : 0;
-            const name = HAND_NAMES[rank];
+            const safePct = Number.isFinite(pct) ? pct : 0;
+            const scaledWidth = maxPct > 0 ? Math.min(100, Math.max(0, safePct / maxPct * 100)) : 0;
+            const name = HAND_NAMES[rank] || `牌型 ${rank}`;
 
             const item = document.createElement('div');
             item.className = 'hand-dist-item';
@@ -1268,7 +1269,7 @@ const app = (() => {
                 <div class="hand-dist-bar">
                     <div class="hand-dist-fill" style="width:${scaledWidth}%"></div>
                 </div>
-                <span class="hand-dist-pct">${data.percentage}%</span>
+                <span class="hand-dist-pct">${safePct.toFixed(1)}%</span>
             `;
             container.appendChild(item);
         });
@@ -2134,7 +2135,7 @@ const app = (() => {
             SUIT_SYMBOLS: window.SUIT_SYMBOLS || SUIT_SYMBOLS, 
             SUITS: window.SUITS || SUITS
         })
-        : { askAI: inlineFallbackAskAI, closeAI: inlineFallbackCloseAI };
+        : { askAI: inlineFallbackAskAI, closeAI: inlineFallbackCloseAI, followUpAI() {}, refreshAI() {}, copyAIResult() {}, sendFollowUp() {} };
 
     const installGuide = typeof setupInstallGuide === 'function'
         ? setupInstallGuide({ state, getEl })
@@ -2142,6 +2143,10 @@ const app = (() => {
 
     const askAI = aiAdvisor.askAI;
     const closeAI = aiAdvisor.closeAI;
+    const followUpAI = aiAdvisor.followUpAI;
+    const refreshAI = aiAdvisor.refreshAI;
+    const copyAIResult = aiAdvisor.copyAIResult;
+    const sendFollowUp = aiAdvisor.sendFollowUp;
 
     const initInstallGuide = installGuide.initInstallGuide;
     const quickInstall = installGuide.quickInstall;
@@ -2180,6 +2185,10 @@ const app = (() => {
         selectStartingHand,
         askAI,
         closeAI,
+        followUpAI,
+        refreshAI,
+        copyAIResult,
+        sendFollowUp,
         quickInstall,
         installApp,
         handleInstallPrimaryAction,
@@ -2187,6 +2196,7 @@ const app = (() => {
         openScanner,
         closeScanner,
         captureAndScan,
+        vibrate,
         __getInternalState: function() { return state; },
         __renderSelectedCards: renderSelectedCards,
         __analyze: analyze,

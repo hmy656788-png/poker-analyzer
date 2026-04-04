@@ -529,8 +529,8 @@
     }
 
     .footer {
-        padding: 24px 20px calc(80px + env(safe-area-inset-bottom));
-        margin-top: 24px;
+        padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
+        margin-top: 20px;
         border-top: 1px solid var(--border-color);
         width: 100%;
     }

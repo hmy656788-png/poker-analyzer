@@ -4,6 +4,7 @@
  */
 
 const DEFAULT_ALLOWED_ORIGINS = [
+    'https://poker-analyzer.hmyapp.com',
     'https://poker-analyzer.pages.dev',
     'http://localhost:8080',
     'http://localhost:8788',
@@ -187,7 +188,7 @@ function getRequestPolicy(requestMarker) {
     }
 
     return {
-        maxMessages: 8,
+        maxMessages: 12,
         maxMessageLength: 2400,
         maxTokensDefault: 1200,
         maxTokensMax: 1600,

@@ -1,6 +1,8 @@
 (function (global) {
     let videoStream = null;
     let targetTarget = 'hand'; // 'hand' or 'community'
+    let previewCards = [];     // cards pending confirmation
+    let previewImageSrc = '';  // captured image for preview
 
     function DOM(id) { return document.getElementById(id); }
 
@@ -95,9 +97,46 @@
         return { x, y, width, height };
     }
 
+    // ── Image enhancement pipeline ──────────────────────────────────────
+
+    function applyUnsharpMask(ctx, width, height, amount) {
+        // Simple unsharp mask via canvas: blur → subtract → add
+        const imageData = ctx.getImageData(0, 0, width, height);
+        const data = imageData.data;
+        const copy = new Uint8ClampedArray(data);
+
+        // Simple 3x3 blur kernel
+        const blurred = new Uint8ClampedArray(data.length);
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                for (let c = 0; c < 3; c++) {
+                    const idx = (y * width + x) * 4 + c;
+                    let sum = 0;
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            sum += copy[((y + dy) * width + (x + dx)) * 4 + c];
+                        }
+                    }
+                    blurred[idx] = sum / 9;
+                }
+                blurred[(y * width + x) * 4 + 3] = 255;
+            }
+        }
+
+        // Unsharp: original + amount * (original - blurred)
+        for (let i = 0; i < data.length; i += 4) {
+            for (let c = 0; c < 3; c++) {
+                const diff = copy[i + c] - blurred[i + c];
+                data[i + c] = clamp(Math.round(copy[i + c] + amount * diff), 0, 255);
+            }
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+    }
+
     function captureFrameAsJpeg(video, canvas, frame, options) {
         const enhance = !!(options && options.enhance);
-        const crop = getFrameCrop(video, frame, enhance ? 0.025 : 0.05);
+        const crop = getFrameCrop(video, frame, enhance ? 0.01 : 0.03);
         const sourceWidth = video.videoWidth;
         const sourceHeight = video.videoHeight;
 
@@ -106,7 +145,8 @@
         const srcWidth = crop ? crop.width : sourceWidth;
         const srcHeight = crop ? crop.height : sourceHeight;
 
-        const MAX_WIDTH = enhance ? 960 : 760;
+        // Higher resolution for better detail
+        const MAX_WIDTH = 1600;
         let targetWidth = srcWidth;
         let targetHeight = srcHeight;
         if (targetWidth > MAX_WIDTH) {
@@ -119,12 +159,28 @@
         const ctx = canvas.getContext('2d', { alpha: false });
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.filter = enhance ? 'contrast(1.18) saturate(1.22) brightness(1.04)' : 'contrast(1.08) saturate(1.08)';
+
+        // Improved filter chain
+        if (enhance) {
+            ctx.filter = 'contrast(1.35) saturate(1.4) brightness(1.05) sharpen(1)';
+        } else {
+            ctx.filter = 'contrast(1.18) saturate(1.2) brightness(1.03)';
+        }
+
         ctx.drawImage(video, srcX, srcY, srcWidth, srcHeight, 0, 0, targetWidth, targetHeight);
         ctx.filter = 'none';
 
-        return canvas.toDataURL('image/jpeg', enhance ? 0.84 : 0.76);
+        // Apply unsharp mask for sharper corner indexes
+        if (enhance) {
+            applyUnsharpMask(ctx, targetWidth, targetHeight, 1.2);
+        } else {
+            applyUnsharpMask(ctx, targetWidth, targetHeight, 0.6);
+        }
+
+        return canvas.toDataURL('image/jpeg', 0.92);
     }
+
+    // ── Network request ─────────────────────────────────────────────────
 
     async function requestScan(base64Image, mode) {
         const response = await fetch('/api/scan', {
@@ -157,6 +213,8 @@
         return payload || {};
     }
 
+    // ── Camera helpers ──────────────────────────────────────────────────
+
     async function requestCameraStream() {
         if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
             throw new Error('当前浏览器不支持摄像头调用');
@@ -164,7 +222,11 @@
 
         try {
             return await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: { ideal: 'environment' } },
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1920 },
+                    height: { ideal: 1080 }
+                },
                 audio: false
             });
         } catch (error) {
@@ -190,106 +252,63 @@
         await video.play().catch(() => {});
 
         if (status) {
-            status.textContent = "请将扑克牌放在框内清晰可见，然后点击拍摄";
+            status.textContent = "请将扑克牌角标对准框内，尽量贴近，避免反光";
         }
         if (button) {
             button.disabled = false;
         }
     }
 
-    const api = {
-        openScanner: async function (target) {
-            targetTarget = target;
-            const modal = DOM('scannerModal');
-            const video = DOM('scannerVideo');
-            const status = DOM('scannerStatus');
-            const button = DOM('btnCaptureScan');
+    // ── Multi-frame capture ─────────────────────────────────────────────
 
-            if (!modal || !video) return;
+    function delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
 
-            openScannerModal(modal);
-            if (status) {
-                status.textContent = "正在请求摄像头权限...";
-            }
-            if (button) {
-                button.disabled = true;
-            }
+    async function captureMultipleFrames(video, canvas, frame, count) {
+        const frames = [];
+        for (let i = 0; i < count; i++) {
+            if (i > 0) await delay(250);
+            const img = captureFrameAsJpeg(video, canvas, frame, { enhance: i > 0 });
+            frames.push(img);
+        }
+        return frames;
+    }
 
-            try {
-                await attachVideoStream(video, status, button);
-            } catch (err) {
-                if (status) {
-                    status.textContent = "无法调用摄像头，请检查权限或换系统浏览器打开。(" + err.message + ")";
-                }
-                console.error("Camera Error:", err);
-            }
-        },
+    // ── Voting / merge logic ────────────────────────────────────────────
 
-        closeScanner: function () {
-            const modal = DOM('scannerModal');
-            const video = DOM('scannerVideo');
-            if (video) {
-                video.pause();
-                video.srcObject = null;
-            }
-            closeScannerModal(modal);
-            stopVideoStream();
-        },
+    function voteCards(resultArrays) {
+        // resultArrays: Array of card arrays, e.g. [['Ah','Kd'], ['Ah','Ks'], ['Ah','Kd']]
+        // For each position, pick the card that appears most often
+        const maxLen = Math.max(...resultArrays.map(a => a.length));
+        if (maxLen === 0) return [];
 
-        captureAndScan: async function () {
-            const video = DOM('scannerVideo');
-            const canvas = DOM('scannerCanvas');
-            const status = DOM('scannerStatus');
-            const btn = DOM('btnCaptureScan');
-            const frame = document.querySelector('.scanner-frame');
-
-            if (!video || !canvas) return;
-
-            btn.disabled = true;
-            status.textContent = "正在裁剪牌框并识别牌面...";
-            if (global.app && global.app.vibrate) global.app.vibrate('medium');
-
-            try {
-                const primaryImage = captureFrameAsJpeg(video, canvas, frame, { enhance: false });
-                let data = await requestScan(primaryImage, 'default');
-                let parsedCards = parseVisionCards(data.cards || data.raw || "");
-
-                if (shouldRetryForSuit(data.raw || data.cards || "", parsedCards)) {
-                    status.textContent = "正在放大角标，二次识别花色...";
-                    const enhancedImage = captureFrameAsJpeg(video, canvas, frame, { enhance: true });
-                    const retryData = await requestScan(enhancedImage, 'suit-focus');
-                    const retryCards = parseVisionCards(retryData.cards || retryData.raw || "");
-                    const mergedCards = mergeCardLists(parsedCards, retryCards);
-                    if (retryCards.length >= parsedCards.length) {
-                        data = retryData;
-                    }
-                    parsedCards = mergedCards;
-                }
-
-                status.textContent = "识别成功，正在填入牌槽...";
-                if (global.app && global.app.vibrate) global.app.vibrate('success');
-
-                console.log("[Scanner] RAW Vision Output:", data.raw);
-
-                if (parsedCards.length === 0) {
-                    status.textContent = "识别到了点数，但没看清完整花色。请让牌更靠近并避开反光后重试。";
-                    btn.disabled = false;
-                    return;
-                }
-
-                fillCards(parsedCards);
-
-                setTimeout(() => {
-                    api.closeScanner();
-                }, 1000);
-
-            } catch (err) {
-                status.textContent = "识别失败：" + (err && err.message ? err.message : err);
-                console.error("Scan API Error:", err);
-                btn.disabled = false;
+        const allCards = {};
+        // Count total appearances across all results
+        for (const cards of resultArrays) {
+            for (const card of cards) {
+                allCards[card] = (allCards[card] || 0) + 1;
             }
         }
-    };
+
+        // Sort by frequency (descending), then alphabetically
+        const sorted = Object.entries(allCards)
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .map(e => e[0]);
+
+        // Return unique cards, favoring those that appear in ≥2 results
+        const seen = new Set();
+        const output = [];
+        for (const card of sorted) {
+            if (seen.has(card)) continue;
+            seen.add(card);
+            output.push(card);
+        }
+
+        return output;
+    }
+
+    // ── Card parsing (from vision output text) ──────────────────────────
 
     function parseVisionCards(rawText) {
         const text = String(rawText || '');
@@ -404,6 +423,8 @@
         return cards;
     }
 
+    // ── Retry heuristics ────────────────────────────────────────────────
+
     function countRankMentions(rawText) {
         const matches = String(rawText || '').match(/\b(ace|king|queen|jack|ten|10|[2-9]|[akqjt])\b/gi);
         return matches ? matches.length : 0;
@@ -413,10 +434,12 @@
         return /(spades?|hearts?|diamonds?|clubs?|[shdc](?![a-z])|黑桃|红桃|红心|方块|方片|梅花|草花|[♠♥♦♣])/i.test(String(rawText || ''));
     }
 
-    function shouldRetryForSuit(rawText, parsedCards) {
+    function shouldRetryEnhanced(rawText, parsedCards, target) {
         const text = String(rawText || '').trim();
-        if (!text) return false;
-        if (parsedCards.length >= 2) return false;
+        if (!text || text.toLowerCase() === 'none') return true;
+        if (parsedCards.length === 0) return true;
+        if (target === 'hand' && parsedCards.length < 2) return true;
+        if (target === 'community' && parsedCards.length < 3) return true;
         return countRankMentions(text) > parsedCards.length || !hasSuitMention(text);
     }
 
@@ -434,6 +457,170 @@
 
         return output;
     }
+
+    // ── Preview / confirmation UI ───────────────────────────────────────
+
+    const RANK_DISPLAY = { '2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','T':'10','J':'J','Q':'Q','K':'K','A':'A' };
+    const SUIT_DISPLAY = { s: '♠', h: '♥', d: '♦', c: '♣' };
+    const SUIT_CLASS   = { s: 'black', h: 'red', d: 'red', c: 'black' };
+
+    function buildPreviewCard(cardKey, index) {
+        const rank = cardKey[0];
+        const suit = cardKey[1];
+        const div = document.createElement('div');
+        div.className = 'preview-card ' + SUIT_CLASS[suit];
+        div.dataset.idx = index;
+        div.innerHTML =
+            '<span class="preview-card-rank">' + (RANK_DISPLAY[rank] || rank) + '</span>' +
+            '<span class="preview-card-suit">' + (SUIT_DISPLAY[suit] || suit) + '</span>';
+        div.onclick = function() { openCardCorrector(index); };
+        return div;
+    }
+
+    function renderPreview(cards, imageSrc) {
+        const previewPanel = DOM('scannerPreview');
+        const previewImg = DOM('scannerPreviewImg');
+        const previewCardsList = DOM('scannerPreviewCards');
+        const cameraView = document.querySelector('.scanner-body .video-container');
+        const controls = document.querySelector('.scanner-controls');
+
+        if (!previewPanel || !previewCardsList) return;
+
+        // Save state
+        previewCards = cards.slice();
+        previewImageSrc = imageSrc;
+
+        // Show preview image
+        if (previewImg && imageSrc) {
+            previewImg.src = imageSrc;
+            previewImg.style.display = 'block';
+        }
+
+        // Render card chips
+        previewCardsList.innerHTML = '';
+        cards.forEach(function(card, i) {
+            previewCardsList.appendChild(buildPreviewCard(card, i));
+        });
+
+        // Add "add card" button if fewer than max
+        const maxCards = targetTarget === 'hand' ? 2 : 5;
+        if (cards.length < maxCards) {
+            const addBtn = document.createElement('div');
+            addBtn.className = 'preview-card add-card';
+            addBtn.innerHTML = '<span class="preview-card-rank">+</span><span class="preview-card-suit">添加</span>';
+            addBtn.onclick = function() { openCardCorrector(cards.length); };
+            previewCardsList.appendChild(addBtn);
+        }
+
+        // Hide camera, show preview
+        if (cameraView) cameraView.style.display = 'none';
+        if (controls) controls.style.display = 'none';
+        previewPanel.style.display = 'flex';
+    }
+
+    function hidePreview() {
+        const previewPanel = DOM('scannerPreview');
+        const cameraView = document.querySelector('.scanner-body .video-container');
+        const controls = document.querySelector('.scanner-controls');
+
+        if (previewPanel) previewPanel.style.display = 'none';
+        if (cameraView) cameraView.style.display = '';
+        if (controls) controls.style.display = '';
+    }
+
+    function confirmPreview() {
+        if (previewCards.length > 0) {
+            fillCards(previewCards);
+            if (global.app && global.app.vibrate) global.app.vibrate('success');
+        }
+        hidePreview();
+        api.closeScanner();
+    }
+
+    function retakePhoto() {
+        hidePreview();
+        const btn = DOM('btnCaptureScan');
+        const status = DOM('scannerStatus');
+        if (btn) btn.disabled = false;
+        if (status) status.textContent = '请重新对准牌面拍摄';
+    }
+
+    // ── Mini card corrector ─────────────────────────────────────────────
+
+    function openCardCorrector(index) {
+        const overlay = DOM('cardCorrectorOverlay');
+        if (!overlay) return;
+
+        const ranks = ['A','K','Q','J','T','9','8','7','6','5','4','3','2'];
+        const suits = ['s','h','d','c'];
+
+        let html = '<div class="corrector-panel">';
+        html += '<div class="corrector-title">选择正确的牌</div>';
+        html += '<div class="corrector-grid">';
+
+        for (const suit of suits) {
+            for (const rank of ranks) {
+                const key = rank + suit;
+                const colorClass = SUIT_CLASS[suit];
+                html += '<button class="corrector-btn ' + colorClass + '" data-card="' + key + '">'
+                    + (RANK_DISPLAY[rank] || rank)
+                    + '<span>' + SUIT_DISPLAY[suit] + '</span>'
+                    + '</button>';
+            }
+        }
+
+        html += '</div>';
+        html += '<button class="corrector-cancel" onclick="document.getElementById(\'cardCorrectorOverlay\').style.display=\'none\'">取消</button>';
+        html += '</div>';
+
+        overlay.innerHTML = html;
+        overlay.style.display = 'flex';
+
+        // Bind click events
+        overlay.querySelectorAll('.corrector-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+                const card = btn.dataset.card;
+                if (index < previewCards.length) {
+                    previewCards[index] = card;
+                } else {
+                    previewCards.push(card);
+                }
+                overlay.style.display = 'none';
+                renderPreview(previewCards, previewImageSrc);
+            });
+        });
+    }
+
+    // ── Progress state helper ───────────────────────────────────────────
+
+    function updateProgress(status, phase, current, total) {
+        if (!status) return;
+        const progressBar = DOM('scannerProgressBar');
+        const progressFill = DOM('scannerProgressFill');
+
+        const messages = {
+            'sampling': '📸 正在采样第 ' + current + '/' + total + ' 帧...',
+            'analyzing': '🧠 AI 正在分析识别（约3-6秒）...',
+            'retrying': '🔄 首次结果不完整，增强识别中...',
+            'merging': '✅ 正在合并结果...',
+            'done': '✅ 识别完成！',
+            'error': '❌ 识别失败'
+        };
+
+        status.textContent = messages[phase] || phase;
+
+        if (progressBar && progressFill) {
+            progressBar.style.display = 'block';
+            const percent = phase === 'done' ? 100 :
+                            phase === 'sampling' ? (current / total * 30) :
+                            phase === 'analyzing' ? 50 :
+                            phase === 'retrying' ? 70 :
+                            phase === 'merging' ? 90 : 0;
+            progressFill.style.width = percent + '%';
+        }
+    }
+
+    // ── Fill cards into app state ────────────────────────────────────────
 
     function fillCards(cardKeys) {
         if (!global.app) return;
@@ -491,7 +678,121 @@
         return ranks[cardObj.rank] + suits[cardObj.suit];
     }
 
-    // Export to standalone global namespace (app.js will bridge these into window.app)
+    // ── Main API ────────────────────────────────────────────────────────
+
+    const api = {
+        openScanner: async function (target) {
+            targetTarget = target;
+            const modal = DOM('scannerModal');
+            const video = DOM('scannerVideo');
+            const status = DOM('scannerStatus');
+            const button = DOM('btnCaptureScan');
+
+            if (!modal || !video) return;
+
+            // Reset state
+            hidePreview();
+            previewCards = [];
+            previewImageSrc = '';
+
+            openScannerModal(modal);
+            if (status) {
+                status.textContent = "正在请求摄像头权限...";
+            }
+            if (button) {
+                button.disabled = true;
+            }
+
+            try {
+                await attachVideoStream(video, status, button);
+            } catch (err) {
+                if (status) {
+                    status.textContent = "无法调用摄像头，请检查权限或换系统浏览器打开。(" + err.message + ")";
+                }
+                console.error("Camera Error:", err);
+            }
+        },
+
+        closeScanner: function () {
+            const modal = DOM('scannerModal');
+            const video = DOM('scannerVideo');
+            if (video) {
+                video.pause();
+                video.srcObject = null;
+            }
+            hidePreview();
+            closeScannerModal(modal);
+            stopVideoStream();
+        },
+
+        captureAndScan: async function () {
+            const video = DOM('scannerVideo');
+            const canvas = DOM('scannerCanvas');
+            const status = DOM('scannerStatus');
+            const btn = DOM('btnCaptureScan');
+            const frame = document.querySelector('.scanner-frame');
+
+            if (!video || !canvas) return;
+
+            btn.disabled = true;
+            if (global.app && global.app.vibrate) global.app.vibrate('medium');
+
+            try {
+                // Phase 1: Multi-frame sampling (2 frames for balance of speed & accuracy)
+                updateProgress(status, 'sampling', 1, 2);
+                const frames = await captureMultipleFrames(video, canvas, frame, 2);
+
+                // Save first frame for preview
+                const previewImage = frames[0];
+
+                // Phase 2: Send first frame for analysis
+                updateProgress(status, 'analyzing');
+                const data1 = await requestScan(frames[0], 'default');
+                let parsed1 = parseVisionCards(data1.cards || data1.raw || "");
+
+                console.log("[Scanner] Frame 1 →", data1.cards, "| Model:", data1.model, "| Parsed:", parsed1);
+
+                // Phase 3: If incomplete, send second frame with enhanced mode
+                let finalCards = parsed1;
+
+                if (shouldRetryEnhanced(data1.raw || data1.cards || "", parsed1, targetTarget)) {
+                    updateProgress(status, 'retrying');
+                    const data2 = await requestScan(frames[1], 'enhanced');
+                    const parsed2 = parseVisionCards(data2.cards || data2.raw || "");
+
+                    console.log("[Scanner] Frame 2 (enhanced) →", data2.cards, "| Model:", data2.model, "| Parsed:", parsed2);
+
+                    // Vote / merge
+                    updateProgress(status, 'merging');
+                    finalCards = voteCards([parsed1, parsed2]);
+
+                    console.log("[Scanner] Voted result:", finalCards);
+                }
+
+                updateProgress(status, 'done');
+
+                if (finalCards.length === 0) {
+                    status.textContent = "未能识别出完整牌面。请让牌角标更靠近镜头并避开反光后重试。";
+                    btn.disabled = false;
+                    return;
+                }
+
+                // Phase 4: Show preview for confirmation
+                renderPreview(finalCards, previewImage);
+
+            } catch (err) {
+                updateProgress(status, 'error');
+                status.textContent = "识别失败：" + (err && err.message ? err.message : err);
+                console.error("Scan API Error:", err);
+                btn.disabled = false;
+            }
+        },
+
+        confirmPreview: confirmPreview,
+        retakePhoto: retakePhoto
+    };
+
+    // Export to standalone global namespace
     global.__scannerAPI = api;
 
 })(window);
