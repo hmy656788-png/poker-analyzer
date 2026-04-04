@@ -542,14 +542,14 @@
 
 
 
-    <dialog id="scannerModal" class="scanner-modal">
+    <div id="scannerModal" class="scanner-modal" style="display:none;">
         <div class="scanner-header">
             <h3>📷 自动识图填牌</h3>
             <button class="btn-close-scanner" onclick="app.closeScanner()">✕</button>
         </div>
         <div class="scanner-body">
             <div class="video-container">
-                <video id="scannerVideo" autoplay playsinline></video>
+                <video id="scannerVideo" autoplay playsinline muted></video>
                 <div class="scanner-overlay">
                     <div class="scanner-frame"></div>
                 </div>
@@ -560,7 +560,7 @@
                 <div id="scannerStatus" class="scanner-status"></div>
             </div>
         </div>
-    </dialog>
+    </div>
 
     <script src="js/poker.js"></script>
     <script src="js/simulator.js"></script>

@@ -6,38 +6,12 @@
 
     function openScannerModal(modal) {
         if (!modal) return;
-
-        if (typeof modal.showModal === 'function') {
-            try {
-                if (!modal.open) modal.showModal();
-                modal.classList.add('is-open');
-                return;
-            } catch (error) {
-                // fall through to manual fallback
-            }
-        }
-
-        modal.setAttribute('open', '');
-        modal.classList.add('is-open');
         modal.style.display = 'flex';
     }
 
     function closeScannerModal(modal) {
         if (!modal) return;
-
-        modal.classList.remove('is-open');
-        modal.style.display = '';
-
-        if (typeof modal.close === 'function' && modal.open) {
-            try {
-                modal.close();
-                return;
-            } catch (error) {
-                // fall through to attribute cleanup
-            }
-        }
-
-        modal.removeAttribute('open');
+        modal.style.display = 'none';
     }
 
     function stopVideoStream() {
