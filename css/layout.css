@@ -310,10 +310,13 @@
     }
 
     .btn-clear-inline {
-        width: 100%;
+        width: auto;
+        flex-shrink: 0;
         justify-content: center;
-        min-height: 42px;
-        padding: 8px 12px;
+        min-height: 32px;
+        padding: 6px 12px;
+        font-size: 0.72rem;
+        margin-left: auto;
     }
 
     /* 阶段进度条 */
