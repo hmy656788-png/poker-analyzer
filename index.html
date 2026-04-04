@@ -583,6 +583,28 @@
             });
         }, { once: true });
     </script>
+    <script>
+        // 保底：确保 scanner API 一定挂载到 window.app（兼容所有 WebView）
+        (function() {
+            if (!window.app) window.app = {};
+            // 如果 scanner.js 的 __scannerAPI 已存在但未被桥接，在此补上
+            if (window.__scannerAPI) {
+                if (!window.app.openScanner) window.app.openScanner = window.__scannerAPI.openScanner;
+                if (!window.app.closeScanner) window.app.closeScanner = window.__scannerAPI.closeScanner;
+                if (!window.app.captureAndScan) window.app.captureAndScan = window.__scannerAPI.captureAndScan;
+            }
+            // 如果 scanner.js 完全没加载，给出明确提示
+            if (typeof window.app.openScanner !== 'function') {
+                window.app.openScanner = function() { alert('扫描模块未加载，请刷新页面重试'); };
+            }
+            if (typeof window.app.closeScanner !== 'function') {
+                window.app.closeScanner = function() {};
+            }
+            if (typeof window.app.captureAndScan !== 'function') {
+                window.app.captureAndScan = function() {};
+            }
+        })();
+    </script>
 </body>
 
 </html>
