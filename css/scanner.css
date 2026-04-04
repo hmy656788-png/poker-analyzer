@@ -8,7 +8,7 @@
     margin: 0;
     padding: 0;
     border: none;
-    background: var(--bg-dark);
+    background: var(--bg-primary, #0a0e17);
     flex-direction: column;
     /* display is toggled by JS: none ↔ flex */
 }
@@ -18,7 +18,7 @@
     justify-content: space-between;
     align-items: center;
     padding: 16px 20px;
-    background: var(--bg-card);
+    background: var(--bg-secondary, #121826);
     border-bottom: 1px solid var(--border-color);
 }
 
