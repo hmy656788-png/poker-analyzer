@@ -2132,6 +2132,21 @@ const app = (() => {
     const installApp = installGuide.installApp;
     const handleInstallPrimaryAction = installGuide.handleInstallPrimaryAction;
     const dismissInstallGuide = installGuide.dismissInstallGuide;
+    const openScanner = function(target) {
+        if (window.__scannerAPI && typeof window.__scannerAPI.openScanner === 'function') {
+            return window.__scannerAPI.openScanner(target);
+        }
+    };
+    const closeScanner = function() {
+        if (window.__scannerAPI && typeof window.__scannerAPI.closeScanner === 'function') {
+            return window.__scannerAPI.closeScanner();
+        }
+    };
+    const captureAndScan = function() {
+        if (window.__scannerAPI && typeof window.__scannerAPI.captureAndScan === 'function') {
+            return window.__scannerAPI.captureAndScan();
+        }
+    };
 
     // ===== 公开 API =====
     return {
@@ -2153,6 +2168,9 @@ const app = (() => {
         installApp,
         handleInstallPrimaryAction,
         dismissInstallGuide,
+        openScanner,
+        closeScanner,
+        captureAndScan,
         __getInternalState: function() { return state; },
         __renderSelectedCards: renderSelectedCards,
         __analyze: analyze,

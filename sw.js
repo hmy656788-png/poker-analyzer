@@ -1,7 +1,7 @@
 importScripts('/js/poker.js', '/js/simulator.js');
 
-const SW_VERSION = '20260426';
-const STATIC_ASSET_VERSION = '20260426';
+const SW_VERSION = '20260427b';
+const STATIC_ASSET_VERSION = '20260427b';
 const STATIC_CACHE = `poker-static-${SW_VERSION}`;
 const RUNTIME_CACHE = `poker-runtime-${SW_VERSION}`;
 const ANALYSIS_CACHE = `poker-analysis-${ANALYSIS_CACHE_VERSION}`;
@@ -13,6 +13,8 @@ const CORE_ASSETS = [
     '/index.html',
     '/css/style.css',
     `/css/style.css?v=${STATIC_ASSET_VERSION}`,
+    '/dist/css/style.css',
+    `/dist/css/style.css?v=${STATIC_ASSET_VERSION}`,
     '/css/scanner.css',
     `/css/scanner.css?v=${STATIC_ASSET_VERSION}`,
     '/js/poker.js',
