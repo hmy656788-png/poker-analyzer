@@ -309,13 +309,17 @@
         align-items: center;
     }
 
-    .btn-clear-inline {
+    .card-selection-label span {
+        white-space: nowrap;
+    }
+
+    .btn.btn-clear-inline {
         width: auto;
         flex-shrink: 0;
         justify-content: center;
         min-height: 32px;
         padding: 6px 12px;
-        font-size: 0.72rem;
+        font-size: 0.76rem;
         margin-left: auto;
     }
 
