@@ -20,6 +20,13 @@
     display: none;
 }
 
+.scanner-modal.is-open {
+    display: flex !important;
+    position: fixed;
+    inset: 0;
+    z-index: 3200;
+}
+
 .scanner-header {
     display: flex;
     justify-content: space-between;

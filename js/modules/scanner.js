@@ -4,46 +4,125 @@
 
     function DOM(id) { return document.getElementById(id); }
 
+    function openScannerModal(modal) {
+        if (!modal) return;
+
+        if (typeof modal.showModal === 'function') {
+            try {
+                if (!modal.open) modal.showModal();
+                modal.classList.add('is-open');
+                return;
+            } catch (error) {
+                // fall through to manual fallback
+            }
+        }
+
+        modal.setAttribute('open', '');
+        modal.classList.add('is-open');
+        modal.style.display = 'flex';
+    }
+
+    function closeScannerModal(modal) {
+        if (!modal) return;
+
+        modal.classList.remove('is-open');
+        modal.style.display = '';
+
+        if (typeof modal.close === 'function' && modal.open) {
+            try {
+                modal.close();
+                return;
+            } catch (error) {
+                // fall through to attribute cleanup
+            }
+        }
+
+        modal.removeAttribute('open');
+    }
+
+    function stopVideoStream() {
+        if (!videoStream) return;
+        videoStream.getTracks().forEach(track => track.stop());
+        videoStream = null;
+    }
+
+    async function requestCameraStream() {
+        if (!navigator.mediaDevices || typeof navigator.mediaDevices.getUserMedia !== 'function') {
+            throw new Error('当前浏览器不支持摄像头调用');
+        }
+
+        try {
+            return await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { ideal: 'environment' } },
+                audio: false
+            });
+        } catch (error) {
+            return navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: false
+            });
+        }
+    }
+
+    async function attachVideoStream(video, status, button) {
+        stopVideoStream();
+
+        const stream = await requestCameraStream();
+        videoStream = stream;
+        video.srcObject = stream;
+
+        if (video.readyState < 1) {
+            await new Promise((resolve) => {
+                video.onloadedmetadata = () => resolve();
+            });
+        }
+        await video.play().catch(() => {});
+
+        if (status) {
+            status.textContent = "请将扑克牌放在框内清晰可见，然后点击拍摄";
+        }
+        if (button) {
+            button.disabled = false;
+        }
+    }
+
     const api = {
         openScanner: async function (target) {
             targetTarget = target;
             const modal = DOM('scannerModal');
             const video = DOM('scannerVideo');
             const status = DOM('scannerStatus');
+            const button = DOM('btnCaptureScan');
 
             if (!modal || !video) return;
 
-            status.textContent = "正在请求摄像头权限...";
-            DOM('btnCaptureScan').disabled = true;
+            openScannerModal(modal);
+            if (status) {
+                status.textContent = "正在请求摄像头权限...";
+            }
+            if (button) {
+                button.disabled = true;
+            }
 
             try {
-                videoStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'environment' }
-                });
-                video.srcObject = videoStream;
-                modal.showModal();
-
-                video.onloadedmetadata = () => {
-                    video.play();
-                    status.textContent = "请将扑克牌放在框内清晰可见，然后点击拍摄";
-                    DOM('btnCaptureScan').disabled = false;
-                };
-
+                await attachVideoStream(video, status, button);
             } catch (err) {
-                status.textContent = "无法调用摄像头，请检查权限。(" + err.message + ")";
+                if (status) {
+                    status.textContent = "无法调用摄像头，请检查权限或换系统浏览器打开。(" + err.message + ")";
+                }
                 console.error("Camera Error:", err);
             }
         },
 
         closeScanner: function () {
             const modal = DOM('scannerModal');
-            if (modal) {
-                modal.close();
+            const video = DOM('scannerVideo');
+            if (video) {
+                video.pause();
+                video.srcObject = null;
             }
-            if (videoStream) {
-                videoStream.getTracks().forEach(track => track.stop());
-                videoStream = null;
-            }
+            closeScannerModal(modal);
+            stopVideoStream();
         },
 
         captureAndScan: async function () {

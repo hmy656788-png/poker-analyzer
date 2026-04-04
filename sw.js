@@ -1,7 +1,7 @@
 importScripts('/js/poker.js', '/js/simulator.js');
 
-const SW_VERSION = '20260425';
-const STATIC_ASSET_VERSION = '20260425';
+const SW_VERSION = '20260426';
+const STATIC_ASSET_VERSION = '20260426';
 const STATIC_CACHE = `poker-static-${SW_VERSION}`;
 const RUNTIME_CACHE = `poker-runtime-${SW_VERSION}`;
 const ANALYSIS_CACHE = `poker-analysis-${ANALYSIS_CACHE_VERSION}`;
@@ -24,7 +24,7 @@ const CORE_ASSETS = [
     '/js/modules/ai-advisor.js',
     `/js/modules/ai-advisor.js?v=${STATIC_ASSET_VERSION}`,
     '/js/modules/scanner.js',
-    `/js/modules/scanner.js?v=20260420`,
+    `/js/modules/scanner.js?v=${STATIC_ASSET_VERSION}`,
     '/js/modules/install-guide.js',
     '/wasm/montecarlo.wasm',
     '/manifest.json',
