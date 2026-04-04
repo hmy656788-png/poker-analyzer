@@ -20,7 +20,7 @@
         .app-boot__bar{position:relative;width:min(220px,100%);height:6px;border-radius:999px;background:rgba(255,255,255,.08);overflow:hidden}
         .app-boot__mark{display:grid;place-items:center;width:68px;height:68px;border-radius:20px;background:linear-gradient(135deg,rgba(255,204,0,.2),rgba(51,136,255,.18));color:#ffcc00;font-size:2rem}
     </style>
-    <link rel="stylesheet" href="dist/css/style.css?v=20260428">
+    <link rel="stylesheet" href="dist/css/style.css?v=20260430">
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♠</text></svg>">
     
@@ -59,7 +59,7 @@
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js?v=20260428')
+                navigator.serviceWorker.register('/sw.js?v=20260430')
                     .then(registration => {
                         console.log('ServiceWorker 注册成功 🎉');
                         registration.update().catch(() => { });
@@ -84,13 +84,18 @@
             }
         };
 
-        document.addEventListener('DOMContentLoaded', () => {
+        function bootFallback() {
             window.__pokerBootFallbackTimer = window.setTimeout(() => {
                 if (typeof window.__pokerRevealApp === 'function') {
                     window.__pokerRevealApp();
                 }
             }, 3200);
-        }, { once: true });
+        }
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', bootFallback, { once: true });
+        } else {
+            bootFallback();
+        }
     </script>
 </head>
 
@@ -300,7 +305,7 @@
                 </div>
 
                 <!-- 操作按钮 -->
-                <div class="action-buttons is-hidden" id="actionButtons" hidden aria-hidden="true" style="display:none;">
+                <div class="action-buttons" id="actionButtons" hidden>
                     <button class="btn btn-primary flex-center" id="analyzeBtn" onclick="app.analyze()" disabled>
                         <svg class="mr-6" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg> 开始分析
                     </button>
@@ -564,11 +569,11 @@
 
     <script src="js/poker.js"></script>
     <script src="js/simulator.js"></script>
-    <script src="js/modules/precompute.js?v=20260409"></script>
-    <script src="js/modules/ai-advisor.js?v=20260420"></script>
-    <script src="js/modules/scanner.js?v=20260427"></script>
-    <script src="js/modules/install-guide.js?v=20260409"></script>
-    <script src="js/app.js?v=20260427"></script>
+    <script src="js/modules/precompute.js?v=20260430"></script>
+    <script src="js/modules/ai-advisor.js?v=20260430"></script>
+    <script src="js/modules/scanner.js?v=20260430"></script>
+    <script src="js/modules/install-guide.js?v=20260430"></script>
+    <script src="js/app.js?v=20260430"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             window.requestAnimationFrame(() => {

@@ -693,22 +693,27 @@ const app = (() => {
 
         if (!state.lastAnalysis) return;
 
+        // shallow clone 防止与正在运行的 analyze() 产生竞态
+        const analysis = { ...state.lastAnalysis };
+
         if (!state.situationEnabled) {
-            state.lastAnalysis.decision = null;
+            analysis.decision = null;
+            state.lastAnalysis = analysis;
             hideDecisionPanel();
-            renderAdvice(getAdvice(state.lastAnalysis.result.winRate));
+            renderAdvice(getAdvice(analysis.result.winRate));
             return;
         }
 
         const updatedDecision = calculateDecisionMetrics(
-            state.lastAnalysis.result.winRate,
+            analysis.result.winRate,
             state.situation.potSize,
             state.situation.callAmount
         );
-        state.lastAnalysis.decision = updatedDecision;
-        state.lastAnalysis.situation = getSituationSnapshot();
-        renderDecisionPanel(updatedDecision, state.lastAnalysis.situation);
-        renderAdvice(getAdvice(state.lastAnalysis.result.winRate, updatedDecision));
+        analysis.decision = updatedDecision;
+        analysis.situation = getSituationSnapshot();
+        state.lastAnalysis = analysis;
+        renderDecisionPanel(updatedDecision, analysis.situation);
+        renderAdvice(getAdvice(analysis.result.winRate, updatedDecision));
     }
 
     function getSituationSnapshot() {
@@ -1047,13 +1052,21 @@ const app = (() => {
 
     // 优化3: 合并多个 Worker 的结果
     function mergeResults(results) {
+        const validResults = results.filter(r => r != null);
+        if (validResults.length === 0) {
+            return {
+                winRate: '0.0', tieRate: '0.0', loseRate: '0.0',
+                wins: 0, ties: 0, losses: 0, total: 0, handDistribution: {}
+            };
+        }
+
         let totalWins = 0;
         let totalTies = 0;
         let totalLosses = 0;
         let totalSims = 0;
         const mergedHandDist = {};
 
-        results.forEach(result => {
+        validResults.forEach(result => {
             totalWins += result.wins;
             totalTies += result.ties;
             totalLosses += result.losses;
@@ -1067,15 +1080,16 @@ const app = (() => {
             });
         });
 
-        // 重新计算百分比
+        // 重新计算百分比（防御除零）
+        const safeDivisor = totalSims > 0 ? totalSims : 1;
         Object.keys(mergedHandDist).forEach(rank => {
-            mergedHandDist[rank].percentage = (mergedHandDist[rank].count / totalSims * 100).toFixed(1);
+            mergedHandDist[rank].percentage = (mergedHandDist[rank].count / safeDivisor * 100).toFixed(1);
         });
 
         return {
-            winRate: (totalWins / totalSims * 100).toFixed(1),
-            tieRate: (totalTies / totalSims * 100).toFixed(1),
-            loseRate: (totalLosses / totalSims * 100).toFixed(1),
+            winRate: (totalWins / safeDivisor * 100).toFixed(1),
+            tieRate: (totalTies / safeDivisor * 100).toFixed(1),
+            loseRate: (totalLosses / safeDivisor * 100).toFixed(1),
             wins: totalWins,
             ties: totalTies,
             losses: totalLosses,
@@ -1528,7 +1542,9 @@ const app = (() => {
 
     // ===== 对手数量 =====
     function updateOpponents(n) {
-        state.numOpponents = parseInt(n);
+        const parsed = parseInt(n, 10);
+        if (isNaN(parsed) || parsed < 1 || parsed > 8) return;
+        state.numOpponents = parsed;
         const count = getEl('opponentCount');
         if (count) count.textContent = n;
 

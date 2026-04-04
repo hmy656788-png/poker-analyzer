@@ -234,7 +234,10 @@ function setupInstallGuide({ state, getEl }) {
         showInstallGuide(true);
     }
 
+    let _installGuideInited = false;
     function initInstallGuide() {
+        if (_installGuideInited) return;
+        _installGuideInited = true;
         updateInstallEntry();
 
         window.addEventListener('beforeinstallprompt', (event) => {
