@@ -241,16 +241,14 @@ export async function onRequestPost(context) {
         return jsonResponse({
             cards: result.clean,
             raw: result.raw,
-            model: usedModel,
             mode
         });
 
     } catch (error) {
-        console.error('AI Vision Error:', error);
+        console.error('AI Vision Error (model=%s):', usedModel, error);
         return jsonResponse({
             error: 'Failed to process image',
             details: describeVisionError(error),
-            model: usedModel,
             mode
         }, 500);
     }

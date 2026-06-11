@@ -4,7 +4,9 @@
       "Bash(grep -n \"HAND_NAMES\\\\|const HAND_NAMES\" /Users/ricardo/Desktop/软件开发/poker-analyzer/js/*.js)",
       "Bash(node -e \"console.log\\(parseFloat\\('0.0'\\)\\); console.log\\(parseFloat\\('100.0'\\)\\); console.log\\(parseFloat\\('NaN'\\)\\); console.log\\(isNaN\\(parseFloat\\('0.0'\\)\\)\\);\")",
       "Bash(grep -n \"function generateStartingHandGrid\" /Users/ricardo/Desktop/软件开发/poker-analyzer/js/*.js)",
-      "Bash(node -e \"const winRate = parseFloat\\('0.0'\\); const tieRate = parseFloat\\('0.0'\\); const loseRate = parseFloat\\('100.0'\\); console.log\\('winRate:', winRate, 'NaN?', isNaN\\(winRate\\)\\); console.log\\('CSS:', \\\\`\\\\${winRate}%\\\\`\\); console.log\\('With NaN:', \\\\`\\\\${parseFloat\\('NaN'\\)}%\\\\`\\);\")"
+      "Bash(node -e \"const winRate = parseFloat\\('0.0'\\); const tieRate = parseFloat\\('0.0'\\); const loseRate = parseFloat\\('100.0'\\); console.log\\('winRate:', winRate, 'NaN?', isNaN\\(winRate\\)\\); console.log\\('CSS:', \\\\`\\\\${winRate}%\\\\`\\); console.log\\('With NaN:', \\\\`\\\\${parseFloat\\('NaN'\\)}%\\\\`\\);\")",
+      "Bash(wc -l /Users/ricardo/Desktop/软件开发/poker-analyzer/*.html /Users/ricardo/Desktop/软件开发/poker-analyzer/*.js /Users/ricardo/Desktop/软件开发/poker-analyzer/*.css)",
+      "Bash(npm test:*)"
     ]
   }
 }

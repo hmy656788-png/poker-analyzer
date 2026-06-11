@@ -10,16 +10,21 @@ function setupAIAdvisor({
     const REQUEST_MARKER = 'ai-advisor';
     const STREAM_UNSAFE_UA_RE = /MicroMessenger|QQ\/|QQBrowser|MetaSr|WebView/i;
     const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
-    const AI_PROMPT_VERSION = '20260404-v3-optimized';
+    const AI_PROMPT_VERSION = '20260612-v4-structured';
     const AI_CACHE_STORAGE_KEY = 'poker.aiAdviceCache.v10';
     const AI_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
     const AI_CACHE_FRESH_MS = 20 * 60 * 1000;
     const AI_CACHE_MAX_ENTRIES = 40;
+    const FOLLOWUP_MAX_TOKENS = 480;
+    const FOLLOWUP_TEMPERATURE = 0.22;
+    const FOLLOWUP_HISTORY_LIMIT = 3;
     const inFlightRequests = new Map();
 
     // Track conversation context
-    let lastAIResponse = '';
-    let lastAIPrompt = '';
+    let lastAIResponse = '';       // 首轮 AI 回答（对话根）
+    let lastAIPrompt = '';         // 首轮牌局事实 prompt（对话根）
+    let lastPromptContext = null;  // 结构化牌局事实，随请求发给 /api/chat
+    let followUpHistory = [];      // 追问历史 [{question, answer}]
     let lastAIMode = '';
     let lastAIRawText = '';  // plain text for copy
 
@@ -62,6 +67,12 @@ function setupAIAdvisor({
         '🎲': { cls: 'ai-tag-hand', label: '概率' },
     };
 
+    function renderInlineMarkdown(text) {
+        return text
+            .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+            .replace(/`(.+?)`/g, '<code>$1</code>');
+    }
+
     function simpleMarkdown(text) {
         const safeText = escapeHTML(text);
         const lines = safeText.split('\n');
@@ -94,9 +105,7 @@ function setupAIAdvisor({
                     bodyPart = content.slice(splitIdx + 1).trim();
                 }
 
-                bodyPart = bodyPart
-                    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                    .replace(/`(.+?)`/g, '<code>$1</code>');
+                bodyPart = renderInlineMarkdown(bodyPart);
 
                 htmlParts.push(
                     `<div class="ai-section ${config.cls}">` +
@@ -116,24 +125,22 @@ function setupAIAdvisor({
             }
 
             if (trimmed.startsWith('&gt; ')) {
-                htmlParts.push(`<blockquote>${trimmed.slice(5)}</blockquote>`);
+                htmlParts.push(`<blockquote>${renderInlineMarkdown(trimmed.slice(5))}</blockquote>`);
                 continue;
             }
 
             if (trimmed.startsWith('- ')) {
-                htmlParts.push(`<li>${trimmed.slice(2)}</li>`);
+                htmlParts.push(`<li>${renderInlineMarkdown(trimmed.slice(2))}</li>`);
                 continue;
             }
 
             const numMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
             if (numMatch) {
-                htmlParts.push(`<li>${numMatch[2]}</li>`);
+                htmlParts.push(`<li>${renderInlineMarkdown(numMatch[2])}</li>`);
                 continue;
             }
 
-            let formatted = trimmed
-                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-                .replace(/`(.+?)`/g, '<code>$1</code>')
+            let formatted = renderInlineMarkdown(trimmed)
                 .replace(/^([^\n：:]{2,14}[：:])/gm, '<strong>$1</strong>');
             htmlParts.push(`<p>${formatted}</p>`);
         }
@@ -267,8 +274,14 @@ function setupAIAdvisor({
         const chips = FOLLOWUP_CHIPS[mode] || FOLLOWUP_CHIPS['decision'];
 
         container.innerHTML = chips.map(chip =>
-            `<button class="ai-followup-chip" onclick="app.followUpAI('${escapeHTML(chip.question)}')">${chip.emoji} ${escapeHTML(chip.text)}</button>`
+            `<button class="ai-followup-chip" data-followup-question="${escapeHTML(chip.question)}">${chip.emoji} ${escapeHTML(chip.text)}</button>`
         ).join('');
+        container.querySelectorAll('[data-followup-question]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const q = btn.getAttribute('data-followup-question');
+                if (q) followUpAI(q);
+            });
+        });
     }
 
     // ── AI Context / Mode ───────────────────────────────────────────────
@@ -417,94 +430,96 @@ function setupAIAdvisor({
         return STREAM_UNSAFE_UA_RE.test(navigator.userAgent || '');
     }
 
+    // 每个模式一份规格，full/compact 两个 system prompt 由 buildSystemPrompt 统一生成；
+    // emoji 标签集只在这里维护，需与 EMOJI_SECTION_MAP 的渲染映射保持一致。
+    const SYSTEM_PROMPT_SPECS = {
+        'decision': {
+            persona: '你是顶级德州扑克策略顾问。',
+            personaCompact: '你是德州扑克策略顾问。',
+            task: '根据给定的牌局数据给出精确决策建议。',
+            rules: [
+                '只依据给定数据，不编造历史动作或对手读牌',
+                '围绕"继续门槛、跟注赔率、CallEV、SPR"展开分析',
+                '不要把"继续门槛"说成"加注门槛"'
+            ],
+            rulesCompact: '只用给定数据，围绕继续门槛/赔率/CallEV分析。',
+            tags: [
+                ['🎯', '核心结论', '一句话给出 Fold/Call/Raise 结论和理由'],
+                ['📋', '推荐动作', '具体动作+尺寸，如 Call 5积分 / Raise to 15积分'],
+                ['💰', '赔率分析', '跟注赔率 vs 胜率 vs 继续门槛的对比'],
+                ['🃏', '牌力解读', '当前成牌+听牌+阻断情况'],
+                ['📌', '下一街计划', '转牌/河牌的打法预案'],
+                ['⚠️', '风险提示', '最需要警惕的危险牌面变化']
+            ],
+            style: '语言简练有力，像教练指导学员。'
+        },
+        'preflop-default': {
+            persona: '你是顶级德州扑克翻前顾问。',
+            personaCompact: '你是德州扑克翻前顾问。',
+            task: '根据给定手牌数据给出开局建议。',
+            rules: [
+                '只依据给定数据，不编造前人动作',
+                '未提供动作历史时按100BB无人入池处理',
+                '不要输出面对下注后的弃牌/跟注结论'
+            ],
+            rulesCompact: '未指明动作即按无人入池处理。',
+            tags: [
+                ['🎯', '核心结论', '这手牌能不能开，一句话定调'],
+                ['📋', '推荐开局', '具体开局方式，如 Open Raise 2.5BB'],
+                ['🏷️', '位置建议', '哪些位置可以打开，哪些要收紧'],
+                ['🃏', '手牌特点', '牌型优势和弱点分析'],
+                ['⚠️', '若遇3bet', '面对反加注的应对策略'],
+                ['📌', '翻后重点', '翻后应关注的要点']
+            ],
+            style: ''
+        },
+        'postflop-default': {
+            persona: '你是顶级德州扑克翻后顾问。',
+            personaCompact: '你是德州扑克翻后顾问。',
+            task: '根据给定牌局数据给出打法建议。',
+            rules: [
+                '只依据给定数据，不编造对手下注或历史动作',
+                '未提供跟注金额时给默认打法和尺寸建议',
+                '不要输出纯弃牌/纯跟注百分比'
+            ],
+            rulesCompact: '未给跟注金额时给默认打法。',
+            tags: [
+                ['🎯', '牌力定位', '当前牌力在这个牌面上处于什么位置'],
+                ['📋', '默认打法', '推荐的行动方式和尺寸'],
+                ['🃏', '听牌/阻断', '顺子/同花听牌分析+阻断效应'],
+                ['⚠️', '危险转牌', '哪些转牌会让你的牌力大幅下降'],
+                ['📌', '下一街计划', '转牌和河牌的打法预案'],
+                ['❌', '最大风险', '这个牌面最需要警惕什么']
+            ],
+            style: ''
+        }
+    };
+
+    function buildSystemPrompt(spec, compact) {
+        if (compact) {
+            return [
+                `${spec.personaCompact}规则：${spec.rulesCompact}`,
+                '',
+                'emoji 标签格式输出：',
+                ...spec.tags.map(([emoji, label]) => `${emoji} ${label}:`),
+                '',
+                '每行1句话，总字数≤260字。'
+            ].join('\n');
+        }
+        return [
+            `${spec.persona}${spec.task}`,
+            '',
+            '规则：',
+            ...spec.rules.map(rule => `- ${rule}`),
+            '',
+            '严格使用以下 emoji 标签格式输出，每行一个标签：',
+            ...spec.tags.map(([emoji, label, hint]) => `${emoji} ${label}: （${hint}）`),
+            '',
+            `每个标签后1-2句话，总字数不超过400字。${spec.style}`.trim()
+        ].join('\n');
+    }
+
     const SYSTEM_PROMPTS = {
-        'decision': `你是顶级德州扑克策略顾问。根据给定的牌局数据给出精确决策建议。
-
-规则：
-- 只依据给定数据，不编造历史动作或对手读牌
-- 围绕"继续门槛、跟注赔率、CallEV、SPR"展开分析
-- 不要把"继续门槛"说成"加注门槛"
-
-严格使用以下 emoji 标签格式输出，每行一个标签：
-🎯 核心结论: （一句话给出 Fold/Call/Raise 结论和理由）
-📋 推荐动作: （具体动作+尺寸，如 Call 5积分 / Raise to 15积分）
-💰 赔率分析: （跟注赔率 vs 胜率 vs 继续门槛的对比）
-🃏 牌力解读: （当前成牌+听牌+阻断情况）
-📌 下一街计划: （转牌/河牌的打法预案）
-⚠️ 风险提示: （最需要警惕的危险牌面变化）
-
-每个标签后1-2句话，总字数不超过400字。语言简练有力，像教练指导学员。`,
-
-        'decision-compact': `你是德州扑克策略顾问。规则：只用给定数据，围绕继续门槛/赔率/CallEV分析。
-
-emoji 标签格式输出：
-🎯 核心结论:
-📋 推荐动作:
-💰 赔率分析:
-🃏 牌力解读:
-📌 下一街:
-⚠️ 风险:
-
-每行1句话，总字数≤260字。`,
-
-        'preflop-default': `你是顶级德州扑克翻前顾问。根据给定手牌数据给出开局建议。
-
-规则：
-- 只依据给定数据，不编造前人动作
-- 未提供动作历史时按100BB无人入池处理
-- 不要输出面对下注后的弃牌/跟注结论
-
-严格使用以下 emoji 标签格式输出，每行一个标签：
-🎯 核心结论: （这手牌能不能开，一句话定调）
-📋 推荐开局: （具体开局方式，如 Open Raise 2.5BB）
-🏷️ 位置建议: （哪些位置可以打开，哪些要收紧）
-🃏 手牌特点: （牌型优势和弱点分析）
-⚠️ 若遇3bet: （面对反加注的应对策略）
-📌 翻后重点: （翻后应关注的要点）
-
-每个标签后1-2句话，总字数不超过400字。`,
-
-        'preflop-default-compact': `你是德州扑克翻前顾问。规则：未指明动作即按无人入池处理。
-
-emoji 标签格式输出：
-🎯 核心结论:
-📋 推荐开局:
-🏷️ 位置建议:
-🃏 手牌特点:
-⚠️ 若遇3bet:
-📌 翻后重点:
-
-每行1句话，总字数≤260字。`,
-
-        'postflop-default': `你是顶级德州扑克翻后顾问。根据给定牌局数据给出打法建议。
-
-规则：
-- 只依据给定数据，不编造对手下注或历史动作
-- 未提供跟注金额时给默认打法和尺寸建议
-- 不要输出纯弃牌/纯跟注百分比
-
-严格使用以下 emoji 标签格式输出，每行一个标签：
-🎯 牌力定位: （当前牌力在这个牌面上处于什么位置）
-📋 默认打法: （推荐的行动方式和尺寸）
-🃏 听牌/阻断: （顺子/同花听牌分析+阻断效应）
-⚠️ 危险转牌: （哪些转牌会让你的牌力大幅下降）
-📌 下一街计划: （转牌和河牌的打法预案）
-❌ 最大风险: （这个牌面最需要警惕什么）
-
-每个标签后1-2句话，总字数不超过400字。`,
-
-        'postflop-default-compact': `你是德州扑克翻后顾问。规则：未给跟注金额时给默认打法。
-
-emoji 标签格式：
-🎯 牌力定位:
-📋 默认打法:
-🃏 听牌/阻断:
-⚠️ 危险转牌:
-📌 下一街:
-❌ 最大风险:
-
-每行1句话，总字数≤260字。`,
-
         'followup': `你是顶级德州扑克策略顾问，正在进行多轮对话。用户之前问过牌局问题，你已给分析。现在用户有追问。
 
 规则：
@@ -513,6 +528,10 @@ emoji 标签格式：
 - 回答具体、有策略深度
 - 总字数不超过350字`
     };
+    for (const [mode, spec] of Object.entries(SYSTEM_PROMPT_SPECS)) {
+        SYSTEM_PROMPTS[mode] = buildSystemPrompt(spec, false);
+        SYSTEM_PROMPTS[`${mode}-compact`] = buildSystemPrompt(spec, true);
+    }
 
     function getAIRequestProfile(mode = 'decision') {
         const embedded = isEmbeddedBrowser();
@@ -542,6 +561,7 @@ emoji 标签格式：
             stream,
             max_tokens: profile.maxTokens,
             temperature: profile.temperature,
+            context: lastPromptContext || undefined,
         };
     }
 
@@ -551,14 +571,19 @@ emoji 标签格式：
         ];
         if (lastAIPrompt) messages.push({ role: 'user', content: lastAIPrompt });
         if (lastAIResponse) messages.push({ role: 'assistant', content: lastAIResponse });
+        for (const turn of followUpHistory) {
+            messages.push({ role: 'user', content: turn.question });
+            messages.push({ role: 'assistant', content: turn.answer });
+        }
         messages.push({ role: 'user', content: question });
 
         return {
             model: 'deepseek-chat',
             messages,
             stream,
-            max_tokens: 480,
-            temperature: 0.22,
+            max_tokens: FOLLOWUP_MAX_TOKENS,
+            temperature: FOLLOWUP_TEMPERATURE,
+            context: lastPromptContext || undefined,
         };
     }
 
@@ -807,6 +832,22 @@ emoji 标签格式：
         }
         if (boardTexture) supportFacts.push(`牌面纹理:${boardTexture}`);
 
+        // 这些 key 与 functions/api/chat.js 本地回退的读取约定一致，改名需两端同步
+        lastPromptContext = {
+            stage: stageText,
+            handKey: handKey || '',
+            hand: hand.join(' '),
+            board: community.join(' '),
+            opponents: String(state.numOpponents),
+            winTieLose: `${winRate}/${tieRate}/${loseRate}`,
+            currentHand: currentHandName || '',
+            texture: boardTexture || '',
+            action: decision ? String(decision.action || '') : '',
+            callEV: decision ? String(decision.callEVBB ?? '') : '',
+            potOdds: decision ? `${decision.potOddsPct}%` : '',
+            required: decision ? `${decision.requiredEquityPct}%` : ''
+        };
+
         if (mode === 'preflop-default') {
             return [
                 '分析以下翻前牌局，严格按 emoji 标签格式输出。',
@@ -949,6 +990,9 @@ emoji 标签格式：
             renderAIContent(cachedAdvice.text, content);
             lastAIResponse = cachedAdvice.text;
             lastAIRawText = cachedAdvice.text;
+            // 缓存命中也要重建对话根，否则追问会丢失牌局事实
+            lastAIPrompt = buildAIPrompt({ compact: profile.compactPrompt, mode });
+            followUpHistory = [];
             showFollowUpBar();
             if (!shouldRefreshStaleCache) {
                 btn.classList.remove('loading');
@@ -982,6 +1026,7 @@ emoji 标签格式：
             if (fullText) {
                 lastAIResponse = fullText;
                 lastAIRawText = fullText;
+                followUpHistory = [];
                 writeAIAdviceCache(cacheKey, fullText);
                 if (shouldRefreshStaleCache && fullText === staleCacheText) {
                     renderAIContent(staleCacheText, content);
@@ -994,6 +1039,7 @@ emoji 标签格式：
                 renderAIContent(staleCacheText, content);
                 lastAIResponse = staleCacheText;
                 lastAIRawText = staleCacheText;
+                followUpHistory = [];
             } else {
                 revealAIContent(content, typing);
                 const fallbackText = mode === 'preflop-default' ? buildLocalPreflopAdvice() : '';
@@ -1082,14 +1128,21 @@ emoji 标签格式：
             }
 
             if (replyText) {
-                lastAIResponse = replyText;
+                followUpHistory.push({ question, answer: replyText });
+                if (followUpHistory.length > FOLLOWUP_HISTORY_LIMIT) followUpHistory.shift();
                 lastAIRawText += '\n\n追问: ' + question + '\n' + replyText;
             }
 
             vibrate('success');
 
         } catch (err) {
-            replyEl.innerHTML = `<div class="ai-error-card"><p class="ai-error-msg">❌ 追问失败：${escapeHTML(String(err && err.message ? err.message : '未知错误'))}</p><button class="ai-retry-btn" onclick="app.followUpAI('${escapeHTML(question)}')">🔄 重试</button></div>`;
+            replyEl.innerHTML = `<div class="ai-error-card"><p class="ai-error-msg">❌ 追问失败：${escapeHTML(String(err && err.message ? err.message : '未知错误'))}</p><button class="ai-retry-btn" data-retry-question="${escapeHTML(question)}">🔄 重试</button></div>`;
+            const retryBtn = replyEl.querySelector('[data-retry-question]');
+            if (retryBtn) {
+                retryBtn.addEventListener('click', () => {
+                    followUpAI(retryBtn.getAttribute('data-retry-question'));
+                });
+            }
         } finally {
             clearTimeout(timeoutId);
             showFollowUpBar();
@@ -1114,6 +1167,8 @@ emoji 标签格式：
         lastAIResponse = '';
         lastAIPrompt = '';
         lastAIRawText = '';
+        lastPromptContext = null;
+        followUpHistory = [];
         askAI({ forceRefresh: true });
     }
 

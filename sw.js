@@ -1,7 +1,7 @@
 importScripts('/js/poker.js', '/js/simulator.js');
 
-const SW_VERSION = '20260431';
-const STATIC_ASSET_VERSION = '20260431';
+const SW_VERSION = '20260612';
+const STATIC_ASSET_VERSION = '20260612';
 const STATIC_CACHE = `poker-static-${SW_VERSION}`;
 const RUNTIME_CACHE = `poker-runtime-${SW_VERSION}`;
 const ANALYSIS_CACHE = `poker-analysis-${SW_VERSION}`;
@@ -138,7 +138,9 @@ self.addEventListener('install', (event) => {
     event.waitUntil(
         caches.open(STATIC_CACHE)
             .then((cache) => cache.addAll(CORE_ASSETS))
-            .catch(() => null)
+            .catch((err) => {
+                console.error('[SW] Failed to cache core assets during install:', err);
+            })
             .then(() => self.skipWaiting())
     );
 });
@@ -210,6 +212,8 @@ async function networkFirstPage(request) {
     }
 }
 
+const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
 async function staleWhileRevalidate(request, sameOrigin) {
     const cacheName = sameOrigin ? STATIC_CACHE : RUNTIME_CACHE;
     const cache = await caches.open(cacheName);
@@ -224,7 +228,20 @@ async function staleWhileRevalidate(request, sameOrigin) {
         })
         .catch(() => null);
 
-    return cached || (await fetchPromise) || Response.error();
+    if (cached) {
+        const cachedDate = cached.headers.get('date');
+        if (cachedDate) {
+            const age = Date.now() - new Date(cachedDate).getTime();
+            if (age > STALE_THRESHOLD_MS) {
+                // Cached resource is stale; prefer network if available
+                const networkResponse = await fetchPromise;
+                if (networkResponse && networkResponse.ok) return networkResponse;
+            }
+        }
+        return cached;
+    }
+
+    return (await fetchPromise) || Response.error();
 }
 
 async function networkFirstGeneric(request) {

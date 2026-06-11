@@ -13,6 +13,7 @@ async function build() {
         entryPoints: ['js/poker.js', 'js/simulator.js'],
         bundle: false,
         minify: true,
+        sourcemap: true,
         outdir: 'dist/js',
     }).catch((e) => {
         console.error('poker/simulator build failed', e);
@@ -25,6 +26,7 @@ async function build() {
         entryPoints: ['js/app.js'],
         bundle: true,
         minify: true,
+        sourcemap: true,
         outdir: 'dist/js',
         format: 'iife',
     }).catch((e) => {
@@ -37,6 +39,7 @@ async function build() {
         entryPoints: ['js/worker.js'],
         bundle: false,
         minify: true,
+        sourcemap: true,
         outdir: 'dist/js',
     }).catch((e) => {
         console.error('worker.js build failed', e);
@@ -48,6 +51,7 @@ async function build() {
         entryPoints: ['css/style.css'],
         bundle: true,
         minify: true,
+        sourcemap: true,
         outdir: 'dist/css'
     }).catch((e) => {
         console.error('CSS build failed', e);

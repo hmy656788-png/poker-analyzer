@@ -2,6 +2,7 @@
  * Cloudflare Pages Function /api/chat
  * Proxy for DeepSeek API to protect the API key.
  */
+import { getClientIp, consumeRateLimit } from './_shared.js';
 
 const DEFAULT_ALLOWED_ORIGINS = [
     'https://poker-analyzer.hmyapp.com',
@@ -117,33 +118,9 @@ function hasValidCsrfToken(request) {
     return { ok: true };
 }
 
-function getClientIP(request) {
-    const direct = request.headers.get('CF-Connecting-IP');
-    if (direct) return direct;
-    const forwarded = request.headers.get('X-Forwarded-For');
-    if (!forwarded) return 'unknown';
-    return forwarded.split(',')[0].trim();
-}
-
 async function assertRateLimit(request, env) {
-    const cache = caches.default;
-    const ip = getClientIP(request);
     const minIntervalMs = Math.max(500, Number(env.CHAT_MIN_INTERVAL_MS) || 2500);
-    const ttlSeconds = Math.ceil(minIntervalMs / 1000);
-    const key = new Request(`https://internal-rate-limit.local/chat/${ip}`);
-    const existing = await cache.match(key);
-
-    if (existing) return false;
-
-    await cache.put(
-        key,
-        new Response('1', {
-            headers: {
-                'Cache-Control': `max-age=${ttlSeconds}, s-maxage=${ttlSeconds}`
-            }
-        })
-    );
-    return true;
+    return consumeRateLimit('chat', getClientIp(request), 1, Math.ceil(minIntervalMs / 1000));
 }
 
 function clamp(value, min, max) {
@@ -227,8 +204,24 @@ function sanitizeRequestData(requestData, requestMarker) {
             max_tokens: clamp(readFiniteNumber(requestData.max_tokens, policy.maxTokensDefault), 96, policy.maxTokensMax),
             temperature: clamp(readFiniteNumber(requestData.temperature, policy.temperatureDefault), 0, 0.8)
         },
-        policy
+        policy,
+        adviceContext: sanitizeAdviceContext(requestData.context)
     };
+}
+
+// 客户端 buildAIPrompt 随请求附带的结构化牌局事实；只用于本地开发回退，不会转发上游。
+const ADVICE_CONTEXT_FIELDS = ['stage', 'handKey', 'hand', 'board', 'opponents', 'winTieLose', 'currentHand', 'texture', 'action', 'callEV', 'potOdds', 'required'];
+
+function sanitizeAdviceContext(rawContext) {
+    if (!rawContext || typeof rawContext !== 'object') return null;
+    const context = {};
+    for (const field of ADVICE_CONTEXT_FIELDS) {
+        const value = rawContext[field];
+        if (typeof value === 'string' && value.trim()) {
+            context[field] = value.trim().slice(0, 120);
+        }
+    }
+    return Object.keys(context).length > 0 ? context : null;
 }
 
 async function sha256Hex(input) {
@@ -238,6 +231,8 @@ async function sha256Hex(input) {
 }
 
 async function buildCompletionCacheRequest(requestMarker, payload) {
+    // assistant 消息必须参与 cache key：追问答案依赖上一轮 AI 回复，
+    // 若过滤掉，不同回复上下文的相同追问会命中同一缓存，返回答非所问的解释。
     const hash = await sha256Hex(JSON.stringify({
         v: AI_RESPONSE_CACHE_VERSION,
         requestMarker,
@@ -271,6 +266,55 @@ function createCompletionResponse(content, model = 'deepseek-chat', metadata = {
         ],
         usage: metadata.usage || undefined
     };
+}
+
+function isLocalDevelopmentRequest(request) {
+    try {
+        const { hostname } = new URL(request.url);
+        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    } catch {
+        return false;
+    }
+}
+
+function extractPromptFact(prompt, label) {
+    const match = String(prompt || '').match(new RegExp(`${label}:([^|\\n]+)`));
+    return match ? match[1].trim() : '';
+}
+
+function createLocalDevelopmentAdvice(payload, context) {
+    const userMessage = [...payload.messages].reverse().find((message) => message.role === 'user');
+    const prompt = userMessage ? userMessage.content : '';
+    const ctx = context || {};
+    // 优先读结构化 context；缺失时回退到从 prompt 文本反解（兼容旧客户端缓存的页面）
+    const fact = (key, label) => ctx[key] || extractPromptFact(prompt, label);
+    const stage = fact('stage', '阶段') || '当前阶段';
+    const hand = fact('hand', '手牌') || fact('handKey', '手牌简称') || '当前手牌';
+    const board = fact('board', '公牌') || '-';
+    const opponents = fact('opponents', '对手') || '-';
+    const winTieLose = fact('winTieLose', '胜平负') || '-';
+    const currentHand = fact('currentHand', '当前牌型') || '-';
+    const action = fact('action', '程序建议') || '';
+    const callEV = fact('callEV', 'CallEV') || '';
+    const potOdds = fact('potOdds', '跟注赔率') || '';
+    const required = fact('required', '继续门槛') || '';
+    const texture = fact('texture', '牌面纹理') || '';
+
+    const decisionLine = action
+        ? `建议优先参考程序决策“${action}”，再结合对手倾向和下注尺度微调。`
+        : '建议结合位置、对手数量和牌面结构，优先选择风险可控的继续方式。';
+    const evLine = callEV || potOdds || required
+        ? `赔率信息：底池赔率 ${potOdds || '-'}，继续门槛 ${required || '-'}，Call EV ${callEV || '-'}。`
+        : '当前未提供完整底池赔率，建议补充底池和跟注金额后再做精确决策。';
+    const textureLine = texture ? `牌面纹理：${texture}。` : `公共牌：${board}。`;
+
+    return [
+        `🎯 牌力定位: ${stage}，手牌 ${hand}，对手 ${opponents} 位，当前牌型 ${currentHand}，胜平负为 ${winTieLose}。`,
+        `💰 赔率分析: ${evLine}`,
+        `🃏 牌面解读: ${textureLine}`,
+        `✅ 行动建议: ${decisionLine}`,
+        '⚠️ 注意事项: 当前为本地策略分析，用于在本地环境下提供即时参考；联网 AI 配置后可返回更完整的模型建议。'
+    ].join('\n');
 }
 
 function extractCompletionText(payload) {
@@ -458,7 +502,7 @@ export async function onRequestPost(context) {
             return jsonResponse({ error: 'Invalid JSON body' }, 400);
         }
 
-        const { payload, policy, error } = sanitizeRequestData(requestData, requestMarker);
+        const { payload, policy, error, adviceContext } = sanitizeRequestData(requestData, requestMarker);
         if (error) {
             return jsonResponse({ error }, 400);
         }
@@ -469,13 +513,25 @@ export async function onRequestPost(context) {
             return createClientCompletionResponse(cachedCompletion, { 'X-AI-Cache': 'HIT' });
         }
 
+        if (!DEEPSEEK_API_KEY) {
+            if (isLocalDevelopmentRequest(request)) {
+                const completion = createCompletionResponse(
+                    createLocalDevelopmentAdvice(payload, adviceContext),
+                    'local-dev-advisor',
+                    { id: `chatcmpl-local-${Date.now()}` }
+                );
+
+                return createClientCompletionResponse(completion, {
+                    'X-AI-Cache': 'BYPASS',
+                    'X-AI-Fallback': 'local-dev'
+                });
+            }
+            return jsonResponse({ error: 'Server missing DEEPSEEK_API_KEY' }, 500);
+        }
+
         const passRateLimit = await assertRateLimit(request, context.env);
         if (!passRateLimit) {
             return jsonResponse({ error: 'Too many requests, retry later' }, 429);
-        }
-
-        if (!DEEPSEEK_API_KEY) {
-            return jsonResponse({ error: 'Server missing DEEPSEEK_API_KEY' }, 500);
         }
 
         // 3. 构建发给 DeepSeek 的请求头部

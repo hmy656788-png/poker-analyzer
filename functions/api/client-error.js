@@ -2,27 +2,16 @@
  * POST /api/client-error
  * 最小化前端异常收集端点，写入 Cloudflare Function 日志。
  */
-const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+import { getClientIp, consumeRateLimit } from './_shared.js';
+
+const RATE_LIMIT_WINDOW_SECONDS = 60;
 const RATE_LIMIT_MAX_REQUESTS = 30;
-const RATE_LIMIT_STATE = new Map();
 
 function jsonResponse(payload, status) {
     return new Response(JSON.stringify(payload), {
         status,
         headers: { 'Content-Type': 'application/json' }
     });
-}
-
-function getClientIp(request) {
-    const cfConnectingIp = request.headers.get('CF-Connecting-IP');
-    if (cfConnectingIp) return cfConnectingIp;
-
-    const forwardedFor = request.headers.get('X-Forwarded-For');
-    if (forwardedFor) {
-        return forwardedFor.split(',')[0].trim();
-    }
-
-    return 'unknown';
 }
 
 function cleanLogValue(value, maxLength) {
@@ -33,31 +22,10 @@ function cleanLogValue(value, maxLength) {
         .slice(0, maxLength);
 }
 
-function isRateLimited(ip, now) {
-    for (const [key, entry] of RATE_LIMIT_STATE.entries()) {
-        if (entry.resetAt <= now) {
-            RATE_LIMIT_STATE.delete(key);
-        }
-    }
-
-    const entry = RATE_LIMIT_STATE.get(ip);
-    if (!entry || entry.resetAt <= now) {
-        RATE_LIMIT_STATE.set(ip, {
-            count: 1,
-            resetAt: now + RATE_LIMIT_WINDOW_MS
-        });
-        return false;
-    }
-
-    entry.count += 1;
-    return entry.count > RATE_LIMIT_MAX_REQUESTS;
-}
-
 export async function onRequestPost(context) {
-    const now = Date.now();
     const ip = getClientIp(context.request);
 
-    if (isRateLimited(ip, now)) {
+    if (!(await consumeRateLimit('client-error', ip, RATE_LIMIT_MAX_REQUESTS, RATE_LIMIT_WINDOW_SECONDS))) {
         return new Response(null, { status: 204 });
     }
 

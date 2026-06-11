@@ -140,21 +140,22 @@ function removeIntCards(deck, cardsToRemove) {
     return result;
 }
 
-// 预分配的工作缓冲区 — 避免每次评估都分配新数组
+/**
+ * 高性能牌型评估 — 整数编码输入，整数编码输出
+ *
+ * 输入: cards[] = 整数牌数组 (5-7张), length = 牌数
+ * 输出: 单个 32 位整数，高位 = 牌型等级，低位 = 踢脚牌值
+ *
+ * 编码格式: handRank * 2^20 + v0 * 2^16 + v1 * 2^12 + v2 * 2^8 + v3 * 2^4 + v4
+ * 可直接用 a - b 比较大小
+ */
+
+// 预分配的工作缓冲区 — 每个执行上下文（主线程/Worker）独立
 const _rc = new Int8Array(13);  // rankCounts
 const _sc = new Int8Array(4);   // suitCounts
 const _sr = [new Int8Array(8), new Int8Array(8), new Int8Array(8), new Int8Array(8)]; // suitRanks per suit
 const _sl = new Int8Array(4);   // suitRanks length per suit
 
-/**
- * 高性能牌型评估 — 整数编码输入，整数编码输出
- * 
- * 输入: cards[] = 整数牌数组 (5-7张), length = 牌数
- * 输出: 单个 32 位整数，高位 = 牌型等级，低位 = 踢脚牌值
- * 
- * 编码格式: handRank * 2^20 + v0 * 2^16 + v1 * 2^12 + v2 * 2^8 + v3 * 2^4 + v4
- * 可直接用 a - b 比较大小
- */
 function getBestHandFast(cards, length) {
     // 清零工作缓冲区
     for (let i = 0; i < 13; i++) _rc[i] = 0;

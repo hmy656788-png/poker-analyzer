@@ -27,11 +27,10 @@ async function loadWasmEngine() {
         let instance;
         if (typeof WebAssembly.instantiateStreaming === 'function') {
             try {
-                const streamingResult = await WebAssembly.instantiateStreaming(response, {});
+                const streamingResult = await WebAssembly.instantiateStreaming(response.clone(), {});
                 instance = streamingResult.instance;
             } catch (streamingError) {
-                const fallbackResponse = await fetch(wasmUrl);
-                const bytes = await fallbackResponse.arrayBuffer();
+                const bytes = await response.arrayBuffer();
                 const nonStreamingResult = await WebAssembly.instantiate(bytes, {});
                 instance = nonStreamingResult.instance;
             }

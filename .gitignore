@@ -18,3 +18,10 @@ node_modules/
 # Environment variables
 .env
 .env.local
+
+# Temporary files
+tmp/
+tmp-*.png
+
+# Virtual environments
+.venv-pdf/

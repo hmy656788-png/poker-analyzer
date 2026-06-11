@@ -10,9 +10,6 @@ const app = (() => {
     const reportedErrorFingerprints = new Set();
     const APP_BUILD = '20260317';
     const ANALYSIS_CACHE_NAME = `poker-analysis-${ANALYSIS_CACHE_VERSION}`;
-    const INSTALL_GUIDE_DISMISS_KEY = 'poker.installGuideDismissAt';
-    const INSTALL_GUIDE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
-    const HOT_HAND_USAGE_KEY = 'poker.hotPreflopUsage.v1';
     const MAX_REPORTED_ERRORS = 5;
 
     const precompute = typeof setupPrecompute === 'function'
@@ -68,12 +65,12 @@ const app = (() => {
     // ===== DOM 缓存 =====
     const DOM = {};
     function getEl(id) {
-        if (!DOM[id]) {
-            const el = document.getElementById(id);
-            if (el) DOM[id] = el;
-            return el;
-        }
-        return DOM[id];
+        const cached = DOM[id];
+        if (cached && cached.isConnected) return cached;
+        const el = document.getElementById(id);
+        if (el) DOM[id] = el;
+        else delete DOM[id];
+        return el;
     }
 
     function getCsrfToken() {
